@@ -57,6 +57,8 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.rel.outputs.release_id }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -69,6 +71,7 @@ jobs:
         id: ver
         run: echo "version=$(date -u +%Y).$(date -u +%-m).${{ github.event.inputs.micro }}" >> "$GITHUB_OUTPUT"
       - name: Tag, release, upload
+        id: rel
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -78,3 +81,37 @@ jobs:
           gh release create "$v" --title "$v" --generate-notes
           gh release upload "$v" --clobber \
             bins/pa-linux-x64 bins/pa-macos-arm64 bins/pa-windows-x64.exe
+          id=$(gh release view "$v" --json databaseId --jq .databaseId)
+          echo "release_id=$id" >> "$GITHUB_OUTPUT"
+
+  desktop-linux:
+    # Desktop bundle: the SAME pa built with --features gui, wrapped as AppImage + .deb by the
+    # Tauri bundler. Runs after `release` so the tag exists; uploads the bundles to it.
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Bundle deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-bin
+      - name: Icons
+        run: |
+          cd crates/pa
+          for s in 32 128 256 512; do rsvg-convert -w "$s" -h "$s" app-icon.svg -o "icons/${s}x${s}.png"; done
+          cp icons/256x256.png icons/128x128@2x.png && cp icons/512x512.png icons/icon.png
+      - name: Compute CalVer
+        id: ver
+        run: echo "version=$(date -u +%Y).$(date -u +%-m).${{ github.event.inputs.micro }}" >> "$GITHUB_OUTPUT"
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # tauri.conf.json lives in the pa binary crate; build it with the gui feature.
+          projectPath: crates/pa
+          args: --features gui
+          tauriScript: cargo tauri
+          tagName: v${{ steps.ver.outputs.version }}
+          releaseId: ${{ needs.release.outputs.release_id }}
