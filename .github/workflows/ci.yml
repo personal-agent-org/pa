@@ -20,7 +20,7 @@ jobs:
             libayatana-appindicator3-dev librsvg2-bin
       - name: Icons for the gui crate
         run: |
-          cd crates/pa-gui
+          cd crates/pa
           for s in 32 128 256 512; do rsvg-convert -w "$s" -h "$s" app-icon.svg -o "icons/${s}x${s}.png"; done
           cp icons/256x256.png icons/128x128@2x.png && cp icons/512x512.png icons/icon.png
       - run: cargo fmt --check
