@@ -76,9 +76,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           v="v${{ steps.ver.outputs.version }}"
-          git tag "$v"
-          git push origin "$v"
-          gh release create "$v" --title "$v" --generate-notes
+          git rev-parse "$v" >/dev/null 2>&1 || { git tag "$v" && git push origin "$v"; }
+          gh release view "$v" >/dev/null 2>&1 || gh release create "$v" --title "$v" --generate-notes
           gh release upload "$v" --clobber \
             bins/pa-linux-x64 bins/pa-macos-arm64 bins/pa-windows-x64.exe
           id=$(gh release view "$v" --json databaseId --jq .databaseId)
@@ -105,6 +104,10 @@ jobs:
       - name: Compute CalVer
         id: ver
         run: echo "version=$(date -u +%Y).$(date -u +%-m).${{ github.event.inputs.micro }}" >> "$GITHUB_OUTPUT"
+      - name: Install the Tauri CLI
+        uses: taiki-e/install-action@v2
+        with:
+          tool: tauri-cli
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
