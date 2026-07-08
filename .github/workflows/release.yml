@@ -112,9 +112,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # tauri.conf.json lives in the pa binary crate; build it with the gui feature.
+          # tauri.conf.json lives in the pa binary crate; build with the gui feature. No
+          # tagName/releaseId => build only; we upload under stable names below.
           projectPath: crates/pa
           args: --features gui
           tauriScript: cargo tauri
-          tagName: v${{ steps.ver.outputs.version }}
-          releaseId: ${{ needs.release.outputs.release_id }}
+      - name: Upload the bundles under stable names
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="v${{ steps.ver.outputs.version }}"
+          appimage=$(find target -type f -name "*.AppImage" | head -1)
+          deb=$(find target -type f -name "*.deb" | head -1)
+          test -n "$appimage" && cp "$appimage" personal-agent.AppImage
+          test -n "$deb" && cp "$deb" personal-agent.deb
+          gh release upload "$v" --clobber personal-agent.AppImage personal-agent.deb
