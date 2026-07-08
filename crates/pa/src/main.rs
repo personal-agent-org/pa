@@ -133,8 +133,10 @@ async fn async_main(cli: Cli) -> Result<()> {
 
 #[cfg(feature = "gui")]
 fn gui() -> Result<()> {
-    // Tauri runs its own event loop and takes over this (main) thread.
-    pa_gui::run();
+    // Tauri runs its own event loop and takes over this (main) thread. The context is
+    // generated HERE (this crate holds tauri.conf.json + the tauri-build codegen), so the
+    // bundler and the macro agree on one config location.
+    pa_gui::run(tauri::generate_context!());
     Ok(())
 }
 

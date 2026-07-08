@@ -11,15 +11,21 @@ path = "src/main.rs"
 [features]
 # The desktop GUI (Tauri). Off by default so the headless `pa` (tui + service) has zero
 # webview dependency and runs on headless servers; the desktop distribution builds with it.
-gui = ["dep:pa-gui"]
+gui = ["dep:pa-gui", "dep:tauri"]
 
 [dependencies]
 pa-tui = { path = "../pa-tui" }
 pa-agent = { path = "../pa-agent" }
 pa-gui = { path = "../pa-gui", optional = true }
+# Only needed for `generate_context!` in the gui arm; the build-dep runs the tauri-build
+# codegen (guarded on the gui feature in build.rs).
+tauri = { version = "2", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 # Process-level crypto provider for rustls 0.23 (the no-provider reqwest/tungstenite
 # feature both libs use). Installed once here in main().
 rustls = { version = "0.23", features = ["ring"] }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }

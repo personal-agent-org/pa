@@ -2879,6 +2879,8 @@ dependencies = [
  "pa-gui",
  "pa-tui",
  "rustls",
+ "tauri",
+ "tauri-build",
  "tokio",
 ]
 
@@ -2917,7 +2919,6 @@ dependencies = [
  "serde_json",
  "sys-locale",
  "tauri",
- "tauri-build",
  "tauri-plugin-autostart",
  "tauri-plugin-notification",
  "tauri-plugin-opener",

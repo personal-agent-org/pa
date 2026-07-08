@@ -1124,6 +1124,8 @@ impl Workspace {
                     let lo = n.saturating_sub(ctx);
                     let hi = (n + ctx).min(lines.len().saturating_sub(1));
                     let mut block = String::new();
+                    #[allow(clippy::needless_range_loop)]
+                    // c is the 1-based line number in the output, not just an index
                     for c in lo..=hi {
                         let sep = if c == n { ':' } else { '-' };
                         block.push_str(&format!(

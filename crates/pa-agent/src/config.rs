@@ -79,7 +79,7 @@ impl Config {
     /// `None` only on exotic platforms where the home dir can't be determined.
     pub fn home_root_resolved(&self) -> Option<String> {
         match self.home_root.as_deref().filter(|s| !s.is_empty()) {
-            Some(raw) if raw == "~" => dirs::home_dir().map(|h| h.to_string_lossy().into_owned()),
+            Some("~") => dirs::home_dir().map(|h| h.to_string_lossy().into_owned()),
             Some(raw) => {
                 if let Some(rest) = raw.strip_prefix("~/") {
                     dirs::home_dir().map(|h| h.join(rest).to_string_lossy().into_owned())

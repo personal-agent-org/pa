@@ -71,9 +71,9 @@ fn read_server(app: &tauri::AppHandle) -> Option<String> {
 fn locale_map() -> serde_json::Map<String, Value> {
     let lang = sys_locale::get_locale().unwrap_or_default().to_lowercase();
     let raw = if lang.starts_with("de") {
-        include_str!("../ui/locales/de.json")
+        include_str!("../../pa/ui/locales/de.json")
     } else {
-        include_str!("../ui/locales/en.json")
+        include_str!("../../pa/ui/locales/en.json")
     };
     serde_json::from_str::<Value>(raw)
         .ok()
@@ -625,8 +625,7 @@ fn show_main(app: &tauri::AppHandle) {
     }
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
+pub fn run(context: tauri::Context<tauri::Wry>) {
     // WebKitGTK on many Linux setups (Wayland, some GPU drivers, VMs) renders a blank white
     // page unless the DMABUF renderer is disabled. Set it before the webview starts; respect
     // an explicit override if the user already set it.
@@ -764,6 +763,6 @@ pub fn run() {
                 }
             }
         })
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running the Personal Agent desktop app");
 }
