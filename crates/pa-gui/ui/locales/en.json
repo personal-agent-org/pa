@@ -1,0 +1,12 @@
+{
+  "setup_intro": "Enter your Personal Agent server URL to connect.",
+  "setup_placeholder": "https://your-instance.example",
+  "setup_connect": "Connect",
+  "setup_connecting": "Connecting...",
+  "error_scheme": "URL must start with http:// or https://",
+  "error_host": "URL has no host",
+  "tray_open": "Open Personal Agent",
+  "tray_change": "Change server",
+  "tray_hide": "Hide to tray",
+  "tray_quit": "Quit"
+}

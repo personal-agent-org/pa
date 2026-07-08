@@ -1,0 +1,33 @@
+[package]
+name = "pa-tui"
+version.workspace = true
+edition.workspace = true
+description = "Personal Agent terminal UI - chat with your agent from the terminal over the same HTTP API as the web app"
+
+[lib]
+name = "pa_tui"
+path = "src/lib.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "io-util", "signal"] }
+# rustls-tls-webpki-roots-no-provider + a process-installed `ring` provider (installed by
+# the `pa` binary): one crypto provider, matching the device-agent so the two clients stay consistent.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots-no-provider", "json", "stream"] }
+# Control WebSocket (cancel/status/approvals + server pushes). Shares the rustls/ring
+# stack with reqwest; ALPN is pinned to http/1.1 so the WS upgrade isn't offered h2.
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+rustls = { version = "0.23", features = ["ring"] }
+webpki-roots = "0.26"
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+clap = { version = "4", features = ["derive"] }
+dirs = "5"
+anyhow = "1"
+base64 = "0.22"
+ratatui = { version = "0.29", features = ["unstable-rendered-line-info"] }
+crossterm = { version = "0.28", features = ["event-stream"] }
+# Markdown → styled ratatui Text (assistant/user message bodies). 0.3.6 is the last
+# release built against ratatui 0.29 (0.3.7+ moved to ratatui 0.30).
+tui-markdown = "=0.3.6"

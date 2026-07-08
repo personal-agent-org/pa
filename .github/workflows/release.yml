@@ -1,0 +1,80 @@
+name: Release
+
+# CalVer (YYYY.M.MICRO), run manually. Builds the headless `pa` (terminal UI + device
+# service, no webview) for every platform, tags, and uploads the per-platform binaries.
+# The backend serves these as the unified client. The desktop (gui-enabled) bundle is a
+# separate job (TODO: tauri bundler + per-OS packaging), not cut here yet.
+on:
+  workflow_dispatch:
+    inputs:
+      micro:
+        description: "MICRO version within this month (0, 1, 2, ...)"
+        required: true
+        default: "0"
+
+permissions:
+  contents: write
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: ci
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset: pa-linux-x64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            asset: pa-macos-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: pa-windows-x64.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      # Headless build: pa-gui is a workspace member but NOT compiled here (no --features gui),
+      # so no webview toolchain is needed on any runner.
+      - name: Build pa (headless) for ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }} -p pa
+      - name: Stage the binary under its asset name
+        shell: bash
+        run: |
+          bin="target/${{ matrix.target }}/release/pa"
+          [ -f "$bin.exe" ] && bin="$bin.exe"
+          cp "$bin" "${{ matrix.asset }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: bins
+          merge-multiple: true
+      - name: Compute CalVer
+        id: ver
+        run: echo "version=$(date -u +%Y).$(date -u +%-m).${{ github.event.inputs.micro }}" >> "$GITHUB_OUTPUT"
+      - name: Tag, release, upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="v${{ steps.ver.outputs.version }}"
+          git tag "$v"
+          git push origin "$v"
+          gh release create "$v" --title "$v" --generate-notes
+          gh release upload "$v" --clobber \
+            bins/pa-linux-x64 bins/pa-macos-arm64 bins/pa-windows-x64.exe
