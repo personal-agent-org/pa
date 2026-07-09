@@ -111,6 +111,9 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GitHub runners have no FUSE, so linuxdeploy/AppImage tooling must self-extract.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          NO_STRIP: "true"
         with:
           # tauri.conf.json lives in the pa binary crate; build with the gui feature. No
           # tagName/releaseId => build only; we upload under stable names below.
@@ -124,6 +127,12 @@ jobs:
           v="v${{ steps.ver.outputs.version }}"
           appimage=$(find target -type f -name "*.AppImage" | head -1)
           deb=$(find target -type f -name "*.deb" | head -1)
-          test -n "$appimage" && cp "$appimage" personal-agent.AppImage
-          test -n "$deb" && cp "$deb" personal-agent.deb
-          gh release upload "$v" --clobber personal-agent.AppImage personal-agent.deb
+          # Upload each bundle independently so a missing one never blocks the other.
+          if [ -n "$appimage" ]; then
+            cp "$appimage" personal-agent.AppImage
+            gh release upload "$v" --clobber personal-agent.AppImage
+          fi
+          if [ -n "$deb" ]; then
+            cp "$deb" personal-agent.deb
+            gh release upload "$v" --clobber personal-agent.deb
+          fi
