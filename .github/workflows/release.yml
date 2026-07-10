@@ -111,14 +111,13 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # GitHub runners have no FUSE, so linuxdeploy/AppImage tooling must self-extract.
-          APPIMAGE_EXTRACT_AND_RUN: "1"
-          NO_STRIP: "true"
         with:
           # tauri.conf.json lives in the pa binary crate; build with the gui feature. No
           # tagName/releaseId => build only; we upload under stable names below.
+          # .deb only: linuxdeploy/AppImage is unreliable on FUSE-less runners; the .deb covers
+          # Debian/Ubuntu. AppImage is a follow-up (needs a working linuxdeploy invocation).
           projectPath: crates/pa
-          args: --features gui
+          args: --features gui --bundles deb
           tauriScript: cargo tauri
       - name: Upload the bundles under stable names
         env:
