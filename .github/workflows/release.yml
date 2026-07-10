@@ -114,10 +114,10 @@ jobs:
         with:
           # tauri.conf.json lives in the pa binary crate; build with the gui feature. No
           # tagName/releaseId => build only; we upload under stable names below.
-          # .deb only: linuxdeploy/AppImage is unreliable on FUSE-less runners; the .deb covers
-          # Debian/Ubuntu. AppImage is a follow-up (needs a working linuxdeploy invocation).
+          # Bundle targets = ["deb"] in tauri.conf.json (linuxdeploy/AppImage is unreliable on
+          # FUSE-less runners; the .deb covers Debian/Ubuntu). AppImage is a follow-up.
           projectPath: crates/pa
-          args: --features gui --bundles deb
+          args: --features gui
           tauriScript: cargo tauri
       - name: Upload the bundles under stable names
         env:
