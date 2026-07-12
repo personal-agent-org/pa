@@ -18,14 +18,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Log in via Keycloak (device flow) and store the connection config.
+    /// Log in via the device flow (OIDC or the server's local login) and store the config.
     Login {
         /// Personal Agent base URL, e.g. https://pa.example.com
         #[arg(long)]
         server: String,
-        /// Keycloak issuer, e.g. https://id.example.com/realms/personal-agent
+        /// Keycloak issuer override, e.g. https://id.example.com/realms/personal-agent.
+        /// Optional: the server advertises it (and the device endpoints) via client-config.
         #[arg(long)]
-        issuer: String,
+        issuer: Option<String>,
         /// OIDC client id for the device flow.
         #[arg(long, default_value = "personal-agent-device")]
         client: String,
@@ -49,7 +50,7 @@ enum Cmd {
 
 #[derive(Subcommand)]
 enum ServiceCmd {
-    /// Log in via Keycloak (device flow) and store the connection config.
+    /// Log in via the device flow (OIDC or the server's local login) and store the config.
     Enroll {
         /// Personal Agent base URL, e.g. https://pa.example.com
         #[arg(long)]
@@ -57,9 +58,10 @@ enum ServiceCmd {
         /// Device id (from the Geräte tab)
         #[arg(long)]
         device: String,
-        /// Keycloak issuer, e.g. https://id.example.com/realms/personal-agent
+        /// Keycloak issuer override, e.g. https://id.example.com/realms/personal-agent.
+        /// Optional: the server advertises it (and the device endpoints) via client-config.
         #[arg(long)]
-        issuer: String,
+        issuer: Option<String>,
         /// OIDC client id for the device flow
         #[arg(long, default_value = "personal-agent-device")]
         client: String,

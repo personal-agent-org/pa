@@ -10,11 +10,18 @@ pub struct Config {
     pub server: String,
     pub device_id: String,
     pub workspace: String,
-    // OIDC (Keycloak device-flow) — the agent authenticates AS the user, no secret.
+    // OIDC (device-flow) — the agent authenticates AS the user, no secret. `issuer` may be
+    // empty when the backend runs its own local identity provider (no Keycloak).
     pub issuer: String,
     pub client_id: String,
     pub access_token: String,
     pub refresh_token: String,
+    // Token endpoint (device_code + refresh_token grants), discovered from the server's
+    // client-config at login: Keycloak in oidc mode, the backend itself in local mode.
+    // Optional + serde(default) so configs written before this existed still load; refresh
+    // then derives the Keycloak URL from `issuer` as before.
+    #[serde(default)]
+    pub token_endpoint: Option<String>,
     // Backend-managed cloud sandbox: when set, the agent authenticates with this
     // short-lived internal token over the `sandbox:` subprotocol (no OIDC/refresh).
     #[serde(default)]
@@ -64,6 +71,7 @@ impl Config {
             client_id: String::new(),
             access_token: String::new(),
             refresh_token: String::new(),
+            token_endpoint: None,
             sandbox_token: Some(token),
             home_root: std::env::var("PA_HOME_ROOT").ok().filter(|s| !s.is_empty()),
             sandbox: matches!(std::env::var("PA_SANDBOX").as_deref(), Ok("1") | Ok("true")),

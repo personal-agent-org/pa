@@ -101,7 +101,7 @@ pub async fn run(mut cfg: Config) -> Result<()> {
         // a backend-managed sandbox skips that — it authenticates with its injected
         // PA_SANDBOX_TOKEN over the `sandbox:` subprotocol.
         if cfg.sandbox_token.is_none() {
-            match crate::oidc::refresh(&cfg.issuer, &cfg.client_id, &cfg.refresh_token).await {
+            match crate::oidc::refresh(&cfg).await {
                 Ok(t) => {
                     cfg.access_token = t.access_token;
                     cfg.refresh_token = t.refresh_token;

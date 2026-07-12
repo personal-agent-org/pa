@@ -9,6 +9,7 @@ name = "pa_agent"
 path = "src/lib.rs"
 
 [dependencies]
+pa-oidc = { path = "../pa-oidc" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "fs", "io-util", "sync"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 rustls = { version = "0.23", features = ["ring"] }

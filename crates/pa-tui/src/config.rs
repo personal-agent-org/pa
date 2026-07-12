@@ -13,11 +13,18 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     /// Personal Agent base URL, e.g. https://pa.example.com (no trailing /api/v1).
     pub server: String,
-    // OIDC (Keycloak device-flow) — the TUI authenticates AS the user, no secret.
+    // OIDC (device-flow) — the TUI authenticates AS the user, no secret. `issuer` may be empty
+    // when the backend runs its own local identity provider (no Keycloak).
     pub issuer: String,
     pub client_id: String,
     pub access_token: String,
     pub refresh_token: String,
+    // Token endpoint (device_code + refresh_token grants), discovered from the server's
+    // client-config at login: Keycloak in oidc mode, the backend itself in local mode.
+    // Optional + serde(default) so configs written before this existed still load; refresh
+    // then derives the Keycloak URL from `issuer` as before.
+    #[serde(default)]
+    pub token_endpoint: Option<String>,
     // Optional active-org override (X-Personal-Agent-Org); otherwise the token's
     // default org claim is used. serde(default) so older config files load unchanged.
     #[serde(default)]

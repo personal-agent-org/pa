@@ -1,6 +1,7 @@
 //! `pa_tui` — the Personal Agent terminal chat client as a library. It speaks the SAME
-//! `/api/v1` HTTP + SSE endpoints as the web SPA: `login` runs the Keycloak device-flow
-//! (authenticating AS the user, no secret), and `run` opens the chat UI.
+//! `/api/v1` HTTP + SSE endpoints as the web SPA: `login` runs the OAuth device-flow
+//! (authenticating AS the user, no secret; against Keycloak or the backend's own local
+//! identity provider - it discovers which from the server), and `run` opens the chat UI.
 
 mod agui;
 mod api;
@@ -36,20 +37,24 @@ pub async fn run() -> Result<()> {
     app::run(client).await
 }
 
-/// Log in via Keycloak (device flow) and store the connection config.
+/// Log in via the device flow (Keycloak or the backend's local identity provider) and store the
+/// connection config. `issuer` is optional: the server's client-config advertises it (and the
+/// device endpoints), so only an override needs to be passed.
 pub async fn login(
     server: String,
-    issuer: String,
+    issuer: Option<String>,
     client: String,
     org: Option<String>,
     lang: Option<String>,
 ) -> Result<()> {
     i18n::init_from(lang.as_deref());
-    let tokens = oidc::device_login(&issuer, &client).await?;
+    let disco = pa_oidc::discover(&server, issuer.as_deref()).await?;
+    let tokens = oidc::device_login(&disco.endpoints, &client).await?;
     let cfg = Config {
         server,
-        issuer,
+        issuer: disco.issuer,
         client_id: client,
+        token_endpoint: Some(disco.endpoints.token),
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
         org,

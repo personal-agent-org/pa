@@ -360,20 +360,24 @@ fn enroll_agent(
     use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};
     emit_progress(window, "Anmeldung (im Browser bestätigen)…");
+    let mut args = vec![
+        "enroll",
+        "--server",
+        server,
+        "--device",
+        device,
+        "--client",
+        client,
+        "--workspace",
+        workspace,
+    ];
+    // --issuer is only an override now: a backend with a local identity provider has none, and
+    // the agent discovers the device endpoints from the server's client-config either way.
+    if !issuer.is_empty() {
+        args.extend_from_slice(&["--issuer", issuer]);
+    }
     let mut child = Command::new(bin)
-        .args([
-            "enroll",
-            "--server",
-            server,
-            "--device",
-            device,
-            "--issuer",
-            issuer,
-            "--client",
-            client,
-            "--workspace",
-            workspace,
-        ])
+        .args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

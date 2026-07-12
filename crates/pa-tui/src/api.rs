@@ -25,6 +25,9 @@ pub struct ApiClient {
     server: String,
     issuer: String,
     client_id: String,
+    // Where the refresh_token grant lives (discovered at login); None on configs written before
+    // it was persisted, where refresh derives the Keycloak URL from `issuer`.
+    token_endpoint: Option<String>,
     org: Option<String>,
     lang: Option<String>,
     tokens: Mutex<TokenState>,
@@ -351,6 +354,7 @@ impl ApiClient {
             server: cfg.server.clone(),
             issuer: cfg.issuer.clone(),
             client_id: cfg.client_id.clone(),
+            token_endpoint: cfg.token_endpoint.clone(),
             org: cfg.org.clone(),
             lang: cfg.lang.clone(),
             tokens: Mutex::new(TokenState {
@@ -399,9 +403,14 @@ impl ApiClient {
     /// Refresh the access token, persist it, and return the fresh access token.
     async fn refresh_token(&self) -> Result<String> {
         let mut guard = self.tokens.lock().await;
-        let fresh = crate::oidc::refresh(&self.issuer, &self.client_id, &guard.refresh)
-            .await
-            .context(crate::i18n::t(crate::i18n::Msg::ApiRefreshFailed))?;
+        let fresh = crate::oidc::refresh(
+            self.token_endpoint.as_deref(),
+            &self.issuer,
+            &self.client_id,
+            &guard.refresh,
+        )
+        .await
+        .context(crate::i18n::t(crate::i18n::Msg::ApiRefreshFailed))?;
         guard.access = fresh.access_token.clone();
         guard.refresh = fresh.refresh_token.clone();
         // Persist so the next process start reuses the rotated refresh token.
@@ -409,6 +418,7 @@ impl ApiClient {
             server: self.server.clone(),
             issuer: self.issuer.clone(),
             client_id: self.client_id.clone(),
+            token_endpoint: self.token_endpoint.clone(),
             access_token: guard.access.clone(),
             refresh_token: guard.refresh.clone(),
             org: self.org.clone(),

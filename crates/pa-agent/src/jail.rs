@@ -2617,13 +2617,11 @@ mod tests {
         }
         let (w, _d) = ws();
         // A git repo with one commit → per-chat worktrees are real git worktrees.
-        for a in [["init", "-q"].as_slice()] {
-            std::process::Command::new("git")
-                .args(a)
-                .current_dir(&w.root)
-                .output()
-                .unwrap();
-        }
+        std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&w.root)
+            .output()
+            .unwrap();
         std::process::Command::new("git")
             .args(["config", "user.email", "t@t"])
             .current_dir(&w.root)

@@ -88,17 +88,16 @@ async fn resolve(cfg: &config::Config, host: &str) -> Result<Option<(String, Str
             .await?
     } else {
         // User device: refresh the short-lived access token (persist the rotation), then bearer it.
-        let access =
-            match crate::oidc::refresh(&cfg.issuer, &cfg.client_id, &cfg.refresh_token).await {
-                Ok(t) => {
-                    let mut c = cfg.clone();
-                    c.access_token = t.access_token.clone();
-                    c.refresh_token = t.refresh_token;
-                    let _ = config::save(&c);
-                    t.access_token
-                }
-                Err(_) => cfg.access_token.clone(),
-            };
+        let access = match crate::oidc::refresh(cfg).await {
+            Ok(t) => {
+                let mut c = cfg.clone();
+                c.access_token = t.access_token.clone();
+                c.refresh_token = t.refresh_token;
+                let _ = config::save(&c);
+                t.access_token
+            }
+            Err(_) => cfg.access_token.clone(),
+        };
         http.get(format!("{base}/api/v1/git/credential"))
             .query(&[("host", host)])
             .bearer_auth(&access)

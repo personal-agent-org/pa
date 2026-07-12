@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/pa-tui", "crates/pa-agent",
+members = ["crates/pa-oidc", "crates/pa-tui", "crates/pa-agent",
     "crates/pa-gui", "crates/pa"]
 
 [workspace.package]

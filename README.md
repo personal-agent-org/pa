@@ -4,10 +4,10 @@ One binary, three faces:
 
 ```
 pa                      # terminal chat UI (default)
-pa login --server … --issuer …
+pa login --server …     # device-flow login (OIDC or the server's local identity provider)
 pa logout
 pa gui                  # desktop window (gui-enabled build only)
-pa service enroll --server … --device … --issuer …
+pa service enroll --server … --device …   # same login, then serve tools
 pa service start        # connect this machine + serve coding tools (alias: run)
 pa service tools        # print the coding-tool catalog (JSON)
 ```

@@ -9,6 +9,7 @@ name = "pa_tui"
 path = "src/lib.rs"
 
 [dependencies]
+pa-oidc = { path = "../pa-oidc" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "io-util", "signal"] }
 # rustls-tls-webpki-roots-no-provider + a process-installed `ring` provider (installed by
 # the `pa` binary): one crypto provider, matching the device-agent so the two clients stay consistent.

@@ -1,0 +1,22 @@
+[package]
+name = "pa-oidc"
+version.workspace = true
+edition.workspace = true
+description = "Personal Agent device-authorization-grant client - one code path for Keycloak (oidc) and the backend's local identity provider"
+
+[lib]
+name = "pa_oidc"
+path = "src/lib.rs"
+
+[dependencies]
+# Same TLS stack as the other client crates: rustls-tls-webpki-roots-no-provider plus the
+# process-installed `ring` provider (installed once by the `pa` binary).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots-no-provider", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["time"] }
+anyhow = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util"] }
+rustls = { version = "0.23", features = ["ring"] }

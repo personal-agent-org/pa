@@ -2897,6 +2897,7 @@ dependencies = [
  "globset",
  "landlock",
  "libc",
+ "pa-oidc",
  "portable-pty",
  "regex",
  "reqwest 0.12.28",
@@ -2929,6 +2930,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pa-oidc"
+version = "2026.7.0"
+dependencies = [
+ "anyhow",
+ "reqwest 0.12.28",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "pa-tui"
 version = "2026.7.0"
 dependencies = [
@@ -2938,6 +2951,7 @@ dependencies = [
  "crossterm",
  "dirs 5.0.1",
  "futures-util",
+ "pa-oidc",
  "ratatui",
  "reqwest 0.12.28",
  "rustls",
