@@ -121,7 +121,7 @@ jobs:
           # tagName/releaseId => build only; we upload under stable names below. Bundle
           # targets = ["deb", "appimage"] in tauri.conf.json.
           projectPath: crates/pa
-          args: --features gui
+          args: --features gui --verbose
           tauriScript: cargo tauri
       - name: Upload the bundles under stable names
         env:
