@@ -2,8 +2,8 @@ name: Release
 
 # CalVer (YYYY.M.MICRO), run manually. Builds the headless `pa` (terminal UI + device
 # service, no webview) for every platform, tags, and uploads the per-platform binaries.
-# The backend serves these as the unified client. The desktop (gui-enabled) bundle is a
-# separate job (TODO: tauri bundler + per-OS packaging), not cut here yet.
+# The backend serves these as the unified client. The `desktop-linux` job then builds the
+# gui-enabled bundle (.deb + AppImage) via the Tauri bundler and attaches it to the release.
 on:
   workflow_dispatch:
     inputs:
@@ -111,11 +111,15 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GitHub-hosted runners have no FUSE, so appimagetool/linuxdeploy can't mount their
+          # runtime; extract-and-run makes them unpack to a tmpdir instead. Without this the
+          # AppImage bundle step hangs/fails on ubuntu-latest.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          NO_STRIP: "true"
         with:
           # tauri.conf.json lives in the pa binary crate; build with the gui feature. No
-          # tagName/releaseId => build only; we upload under stable names below.
-          # Bundle targets = ["deb"] in tauri.conf.json (linuxdeploy/AppImage is unreliable on
-          # FUSE-less runners; the .deb covers Debian/Ubuntu). AppImage is a follow-up.
+          # tagName/releaseId => build only; we upload under stable names below. Bundle
+          # targets = ["deb", "appimage"] in tauri.conf.json.
           projectPath: crates/pa
           args: --features gui
           tauriScript: cargo tauri
