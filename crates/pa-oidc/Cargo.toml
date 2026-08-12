@@ -9,9 +9,15 @@ name = "pa_oidc"
 path = "src/lib.rs"
 
 [dependencies]
-# Same TLS stack as the other client crates: rustls-tls-webpki-roots-no-provider plus the
-# process-installed `ring` provider (installed once by the `pa` binary).
+# This crate owns the workspace's TLS trust decision (see src/tls.rs) and hands a
+# preconfigured rustls config to reqwest, so the roots come from the SYSTEM store rather than
+# only the compiled-in Mozilla set. Every other client crate goes through it.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots-no-provider", "json"] }
+rustls = { version = "0.23", features = ["ring"] }
+# Reads the OS trust store, and honours SSL_CERT_FILE / SSL_CERT_DIR with it.
+rustls-native-certs = "0.8"
+# Fallback only, for machines with no system store at all (scratch containers).
+webpki-roots = "0.26"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["time"] }
@@ -19,4 +25,3 @@ anyhow = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util"] }
-rustls = { version = "0.23", features = ["ring"] }

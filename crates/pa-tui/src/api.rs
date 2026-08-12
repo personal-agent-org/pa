@@ -345,7 +345,9 @@ pub struct MemoryAccess {
 
 impl ApiClient {
     pub fn new(cfg: &Config) -> Result<ApiClient> {
-        let http = reqwest::Client::builder()
+        // pa_oidc::tls, not reqwest's own roots: the server may well be behind an internal
+        // CA, which the compiled-in Mozilla set knows nothing about.
+        let http = pa_oidc::tls::http_client_builder()
             .user_agent(concat!("personal-agent-tui/", env!("CARGO_PKG_VERSION")))
             .build()?;
         Ok(ApiClient {

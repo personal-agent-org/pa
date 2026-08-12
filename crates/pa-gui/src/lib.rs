@@ -47,6 +47,56 @@ const BRIDGE_INIT_JS: &str = r#"
 })();
 "#;
 
+// --- "Set up terminal access": run the device grant from the window ---------------------
+//
+// The window and the terminal authenticate separately (the bridge says `ownsAuth:false`, so the
+// SPA keeps its own web login). Someone signed in to the desktop app still had no terminal
+// credentials, and the terminal's own advice - run `pa login` - is not reachable from a window
+// that is not a terminal. This closes that loop without copying tokens between the two: the
+// grant runs again and the user confirms it.
+
+/// Shows the device code as a desktop notification and opens the verification URL.
+struct GuiPrompt {
+    app: tauri::AppHandle,
+}
+
+impl pa_oidc::Prompt for GuiPrompt {
+    fn authorize(&self, url: &str, user_code: &str) {
+        // The URL goes to the system browser rather than the webview: this is the IdP's own
+        // consent page, and the in-window navigation allowlist deliberately does not admit it.
+        let _ = self.app.opener().open_url(url, None::<&str>);
+        let _ = self
+            .app
+            .notification()
+            .builder()
+            .title("Personal Agent")
+            .body(format!("Code: {user_code}"))
+            .show();
+    }
+
+    fn failed(&self, error: &str) -> String {
+        format!("device authorization failed: {error}")
+    }
+}
+
+fn enroll_terminal_access(app: &tauri::AppHandle) {
+    let Some(server) = read_server(app) else {
+        return; // no server chosen yet: the setup screen is showing, nothing to enrol against
+    };
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let prompt = GuiPrompt { app: app.clone() };
+        let (title, body) = match pa_tui::enroll_terminal_access(&server, &prompt).await {
+            Ok(path) => (
+                "Personal Agent",
+                format!("Terminal access ready: {}", path.display()),
+            ),
+            Err(e) => ("Personal Agent", format!("Sign-in failed: {e}")),
+        };
+        let _ = app.notification().builder().title(title).body(body).show();
+    });
+}
+
 // Where the chosen server URL is persisted (per-user app config dir).
 fn server_file(app: &tauri::AppHandle) -> Option<PathBuf> {
     app.path()
@@ -731,6 +781,13 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
                 true,
                 None::<&str>,
             )?;
+            let terminal = MenuItem::with_id(
+                &handle,
+                "terminal",
+                tr(&t, "tray_terminal", "Set up terminal access"),
+                true,
+                None::<&str>,
+            )?;
             let quit = MenuItem::with_id(
                 &handle,
                 "quit",
@@ -738,7 +795,7 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
                 true,
                 None::<&str>,
             )?;
-            let menu = Menu::with_items(&handle, &[&show, &change, &hide, &quit])?;
+            let menu = Menu::with_items(&handle, &[&show, &change, &terminal, &hide, &quit])?;
             let _tray = TrayIconBuilder::with_id("main")
                 .icon(handle.default_window_icon().unwrap().clone())
                 .tooltip("Personal Agent")
@@ -746,6 +803,7 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => show_main(app),
                     "change" => forget_and_restart(app),
+                    "terminal" => enroll_terminal_access(app),
                     "hide" => {
                         if let Some(w) = app.get_webview_window("main") {
                             let _ = w.hide();

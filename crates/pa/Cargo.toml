@@ -14,6 +14,9 @@ path = "src/main.rs"
 gui = ["dep:pa-gui", "dep:tauri"]
 
 [dependencies]
+# For DEFAULT_DEVICE_CLIENT_ID: the flag default and the fallback inside the login must be the
+# SAME string, or "did the user pick this?" cannot be answered.
+pa-oidc = { path = "../pa-oidc" }
 pa-tui = { path = "../pa-tui" }
 pa-agent = { path = "../pa-agent" }
 pa-gui = { path = "../pa-gui", optional = true }

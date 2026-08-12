@@ -217,16 +217,12 @@ async fn connect_and_run(
     }
 }
 
-/// A rustls connector pinned to webpki roots + http/1.1 ALPN (so a reverse proxy doesn't
-/// negotiate h2, which the HTTP/1.1 WebSocket upgrade can't ride) — same as the device-agent.
+/// A rustls connector on the workspace's shared trust store, with ALPN pinned to http/1.1 (so
+/// a reverse proxy doesn't negotiate h2, which the HTTP/1.1 WebSocket upgrade can't ride).
 pub(crate) fn tls_connector() -> Connector {
-    let mut roots = rustls::RootCertStore::empty();
-    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    let mut cfg = rustls::ClientConfig::builder()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-    cfg.alpn_protocols = vec![b"http/1.1".to_vec()];
-    Connector::Rustls(Arc::new(cfg))
+    // Same trust store as every HTTP call in the workspace -- an internal CA has to
+    // work for the control socket too, or the login succeeds and the stream does not.
+    Connector::Rustls(Arc::new(pa_oidc::tls::ws_tls_config()))
 }
 
 fn s(v: &Value, k: &str) -> String {

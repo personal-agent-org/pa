@@ -9,6 +9,15 @@
 //! local token endpoint serves the same two grants as Keycloak's:
 //! `urn:ietf:params:oauth:grant-type:device_code` and `refresh_token`.
 
+pub mod tls;
+
+/// The compiled-in device client id.
+///
+/// It exists in the shipped Keycloak realm-as-code and nowhere else, so it is a LAST resort:
+/// what the server advertises comes first. Public here so the CLI can tell "the user chose
+/// this" apart from "nobody chose anything".
+pub const DEFAULT_DEVICE_CLIENT_ID: &str = "personal-agent-device";
+
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -32,6 +41,10 @@ pub struct ClientConfig {
     pub browser_client_id: String,
     #[serde(default)]
     pub android_client_id: String,
+    /// The client id the SERVER wants headless callers to run the device grant under. Absent
+    /// on older backends, hence the fallback chain in [`Discovery::client_id`].
+    #[serde(default)]
+    pub device_client_id: String,
     /// Absolute URL. Absent on backends older than the local-auth mode - see [`Endpoints::resolve`].
     #[serde(default)]
     pub device_authorization_endpoint: Option<String>,
@@ -91,17 +104,68 @@ pub struct Discovery {
     pub auth_mode: String,
     pub issuer: String,
     pub endpoints: Endpoints,
+    /// What the server says to authenticate as, if anything. See [`Discovery::client_id`].
+    pub device_client_id: Option<String>,
+}
+
+impl Discovery {
+    /// The client id to run the device grant under.
+    ///
+    /// Server first, because only the server knows which clients its IdP actually has. The
+    /// compiled-in default (`personal-agent-device`) exists in the shipped Keycloak realm and
+    /// NOWHERE else -- against any other provider it fails with a bare `invalid_client`, which
+    /// says nothing about the client id being the problem. An explicit `--client` still wins:
+    /// it is the escape hatch for a server that advertises the wrong thing.
+    pub fn client_id(&self, flag: &str, flag_is_default: bool) -> String {
+        if !flag_is_default {
+            return flag.to_string();
+        }
+        non_empty(self.device_client_id.as_deref()).unwrap_or_else(|| flag.to_string())
+    }
+}
+
+/// A reqwest error with its whole cause chain, plus a hint when it is a trust failure.
+///
+/// `reqwest`'s Display is one line ("error sending request for url (...)"); the reason -- the
+/// rustls verdict, the DNS error, the connection refused -- is only in `source()`. Printing the
+/// top line alone is what turned an internal-CA problem into a hunt for a network fault.
+fn describe(err: &reqwest::Error) -> String {
+    let mut parts: Vec<String> = vec![err.to_string()];
+    let mut src: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(err);
+    while let Some(e) = src {
+        let text = e.to_string();
+        // reqwest wraps hyper wraps rustls: the same sentence can appear at several levels.
+        if !parts.iter().any(|p| p == &text) {
+            parts.push(text);
+        }
+        src = std::error::Error::source(e);
+    }
+    let joined = parts.join(": ");
+    if joined.contains("UnknownIssuer") || joined.contains("invalid peer certificate") {
+        format!(
+            "{joined}\n  hint: the server's certificate is signed by a CA this client does not \
+             trust. Install it in the system trust store (update-ca-trust / \
+             update-ca-certificates), or point SSL_CERT_FILE at the CA bundle."
+        )
+    } else {
+        joined
+    }
 }
 
 /// Fetch `GET {server}/api/v1/public/client-config`.
 pub async fn fetch_client_config(server: &str) -> Result<ClientConfig> {
     let base = server.trim_end_matches('/');
     let url = format!("{base}/api/v1/public/client-config");
-    let cfg: ClientConfig = reqwest::Client::new()
+    let cfg: ClientConfig = tls::http_client()
         .get(&url)
         .send()
         .await
-        .with_context(|| format!("client-config unreachable ({url})"))?
+        // The cause matters more than the label. "unreachable" covers DNS, connect, TLS and
+        // timeout, and an operator reading it goes looking at the network -- when the actual
+        // message underneath is usually `invalid peer certificate: UnknownIssuer`, i.e. a CA
+        // that is installed on the machine but was not trusted by this binary.
+        .map_err(|e| anyhow!("{}", describe(&e)))
+        .with_context(|| format!("could not load client-config ({url})"))?
         .error_for_status()
         .with_context(|| format!("client-config failed ({url})"))?
         .json()
@@ -124,6 +188,7 @@ pub async fn discover(server: &str, issuer_override: Option<&str>) -> Result<Dis
                 auth_mode: default_auth_mode(),
                 endpoints: Endpoints::from_issuer(&issuer),
                 issuer,
+                device_client_id: None,
             });
         }
     };
@@ -135,6 +200,11 @@ pub async fn discover(server: &str, issuer_override: Option<&str>) -> Result<Dis
         auth_mode: cfg.auth_mode.clone(),
         endpoints: Endpoints::resolve(&cfg, &issuer),
         issuer,
+        // The SPA client is the sensible second choice: it is public and, on providers that
+        // register one client for all the front ends (Authentik among them), it is the one with
+        // the device grant enabled.
+        device_client_id: non_empty(Some(cfg.device_client_id.as_str()))
+            .or_else(|| non_empty(Some(cfg.spa_client_id.as_str()))),
     })
 }
 
@@ -146,7 +216,10 @@ pub fn token_endpoint(persisted: Option<&str>, issuer: &str) -> String {
 
 /// How the caller shows the pending device authorization to the user, and how it phrases a
 /// failure (the TUI localizes both, the agent prints plain text).
-pub trait Prompt {
+/// `Sync` is part of the contract, not an accident: the grant polls across `.await` points, so
+/// a caller driving it from a multi-threaded runtime (the desktop window does) needs the prompt
+/// to be shareable. Every implementation is a unit struct or holds a handle that already is.
+pub trait Prompt: Sync {
     /// Tell the user to open `url` in a browser and confirm `user_code`.
     fn authorize(&self, url: &str, user_code: &str);
     /// The user-facing message for a failed authorization (`error` = the OAuth error code).
@@ -179,7 +252,7 @@ pub async fn device_login(
     client_id: &str,
     prompt: &dyn Prompt,
 ) -> Result<Tokens> {
-    let http = reqwest::Client::new();
+    let http = tls::http_client();
     // client_id is sent in BOTH modes: the local provider has no client registry, but it
     // records the id and shows it on the /activate approval screen ("pa-cli wants access").
     let da: DeviceAuthResponse = http
@@ -224,7 +297,7 @@ pub async fn device_login(
 
 /// Exchange a refresh token for a fresh access (+ refresh) token.
 pub async fn refresh(token_endpoint: &str, client_id: &str, refresh_token: &str) -> Result<Tokens> {
-    let resp = reqwest::Client::new()
+    let resp = tls::http_client()
         .post(token_endpoint)
         .form(&[
             ("grant_type", "refresh_token"),
@@ -428,5 +501,63 @@ mod tests {
 
         let server = mock_server("404 Not Found", "{}").await;
         assert!(discover(&server, None).await.is_err());
+    }
+
+    // --- which client the device grant runs under -------------------------------------
+
+    #[tokio::test]
+    async fn the_server_names_the_device_client() {
+        // The whole point: `personal-agent-device` exists in the shipped Keycloak realm and
+        // nowhere else. On any other provider it fails with a bare `invalid_client`, which
+        // names neither the client nor the fact that the client id is what is wrong.
+        let server = mock_server(
+            "200 OK",
+            r#"{"oidc_issuer":"https://id.example.com/x","device_client_id":"pa-device-here"}"#,
+        )
+        .await;
+        let d = discover(&server, None).await.unwrap();
+        assert_eq!(
+            d.client_id(DEFAULT_DEVICE_CLIENT_ID, true),
+            "pa-device-here"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_spa_client_is_the_fallback() {
+        // Providers that register ONE public client for every front end (Authentik among them)
+        // advertise it as the SPA client, and that is the one with the device grant enabled.
+        let server = mock_server(
+            "200 OK",
+            r#"{"oidc_issuer":"https://id.example.com/x","spa_client_id":"personal-agent-spa"}"#,
+        )
+        .await;
+        let d = discover(&server, None).await.unwrap();
+        assert_eq!(
+            d.client_id(DEFAULT_DEVICE_CLIENT_ID, true),
+            "personal-agent-spa"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_explicit_client_flag_wins() {
+        // The escape hatch for a server that advertises the wrong thing.
+        let server = mock_server(
+            "200 OK",
+            r#"{"oidc_issuer":"https://x","device_client_id":"advertised"}"#,
+        )
+        .await;
+        let d = discover(&server, None).await.unwrap();
+        assert_eq!(d.client_id("chosen-by-hand", false), "chosen-by-hand");
+    }
+
+    #[tokio::test]
+    async fn an_old_backend_leaves_the_compiled_in_default() {
+        // Advertises neither field: the Keycloak-era behaviour has to survive untouched.
+        let server = mock_server("200 OK", r#"{"oidc_issuer":"https://id.example.com/x"}"#).await;
+        let d = discover(&server, None).await.unwrap();
+        assert_eq!(
+            d.client_id(DEFAULT_DEVICE_CLIENT_ID, true),
+            DEFAULT_DEVICE_CLIENT_ID
+        );
     }
 }
