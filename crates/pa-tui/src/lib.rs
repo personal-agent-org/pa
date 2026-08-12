@@ -50,7 +50,7 @@ pub async fn run() -> Result<()> {
 /// This is the bridge, and it is a deliberate, visible act rather than a silent copy: the grant
 /// runs again, the user confirms it, and only its OWN tokens are written. Lifting the webview's
 /// tokens into a file would be a different security decision than the one already made.
-pub async fn enroll_terminal_access<P: pa_oidc::Prompt + Sync>(
+pub async fn enroll_terminal_access<P: pa_oidc::Prompt>(
     server: &str,
     prompt: &P,
 ) -> Result<std::path::PathBuf> {

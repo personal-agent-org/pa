@@ -216,7 +216,10 @@ pub fn token_endpoint(persisted: Option<&str>, issuer: &str) -> String {
 
 /// How the caller shows the pending device authorization to the user, and how it phrases a
 /// failure (the TUI localizes both, the agent prints plain text).
-pub trait Prompt {
+/// `Sync` is part of the contract, not an accident: the grant polls across `.await` points, so
+/// a caller driving it from a multi-threaded runtime (the desktop window does) needs the prompt
+/// to be shareable. Every implementation is a unit struct or holds a handle that already is.
+pub trait Prompt: Sync {
     /// Tell the user to open `url` in a browser and confirm `user_code`.
     fn authorize(&self, url: &str, user_code: &str);
     /// The user-facing message for a failed authorization (`error` = the OAuth error code).
