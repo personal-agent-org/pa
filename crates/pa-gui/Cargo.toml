@@ -9,6 +9,11 @@ description = "Personal Agent desktop GUI (Tauri) - the `pa gui` window"
 name = "pa_gui"
 
 [dependencies]
+# For "set up terminal access": the device grant lives in pa-oidc, and pa-tui owns the config
+# format the terminal reads. Reusing both keeps ONE definition of each instead of a second copy
+# in the GUI that can drift.
+pa-oidc = { path = "../pa-oidc" }
+pa-tui = { path = "../pa-tui" }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-window-state = "2"

@@ -84,12 +84,35 @@ enum ServiceCmd {
     },
 }
 
+/// True when nobody is at a terminal, in a build that HAS a GUI to fall back on.
+///
+/// stdin rather than stdout: a user who pipes output (`pa | less`) is still at a terminal and
+/// still wants the TUI, whereas a desktop launcher gives the process no terminal on any stream.
+#[cfg(feature = "gui")]
+fn launched_from_a_desktop_entry() -> bool {
+    use std::io::IsTerminal;
+    !std::io::stdin().is_terminal()
+}
+
+/// Without the GUI feature there is nothing to fall back to, so the TUI stays the answer.
+#[cfg(not(feature = "gui"))]
+fn launched_from_a_desktop_entry() -> bool {
+    false
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // The GUI owns the native (main) thread and runs its own event loop, so it must NOT be
     // launched from inside a tokio runtime. Everything else runs on a normal async runtime.
-    if matches!(cli.cmd, Some(Cmd::Gui)) {
+    //
+    // No subcommand means "open the thing the user asked for", and that depends on HOW they
+    // asked. From a terminal it is the TUI, as always. Launched from a desktop entry there is
+    // no terminal at all: the TUI then draws into nothing and, on a machine without
+    // `pa login`, exits with "not signed in - run `personal-agent-tui login` first" - advice
+    // that cannot be followed from a window that isn't a terminal, for a config file the GUI
+    // does not even use. The desktop bundle IS this binary, so the same argv has to serve both.
+    if matches!(cli.cmd, Some(Cmd::Gui)) || (cli.cmd.is_none() && launched_from_a_desktop_entry()) {
         return gui();
     }
 
