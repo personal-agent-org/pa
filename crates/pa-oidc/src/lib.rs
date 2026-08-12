@@ -124,7 +124,6 @@ impl Discovery {
     }
 }
 
-
 /// A reqwest error with its whole cause chain, plus a hint when it is a trust failure.
 ///
 /// `reqwest`'s Display is one line ("error sending request for url (...)"); the reason -- the
