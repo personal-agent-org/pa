@@ -30,6 +30,8 @@ pub async fn enroll(
         .map(|p| p.display().to_string())
         .unwrap_or(workspace);
     let disco = pa_oidc::discover(&server, issuer.as_deref()).await?;
+    // Same rule as `pa login`: the server names the client unless --client overrode it.
+    let client = disco.client_id(&client, client == pa_oidc::DEFAULT_DEVICE_CLIENT_ID);
     let tokens = oidc::device_login(&disco.endpoints, &client).await?;
     let cfg = Config {
         server,

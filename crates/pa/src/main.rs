@@ -28,7 +28,7 @@ enum Cmd {
         #[arg(long)]
         issuer: Option<String>,
         /// OIDC client id for the device flow.
-        #[arg(long, default_value = "personal-agent-device")]
+        #[arg(long, default_value = pa_oidc::DEFAULT_DEVICE_CLIENT_ID)]
         client: String,
         /// Optional active org (X-Personal-Agent-Org); omit to use the token default.
         #[arg(long)]
@@ -63,7 +63,7 @@ enum ServiceCmd {
         #[arg(long)]
         issuer: Option<String>,
         /// OIDC client id for the device flow
-        #[arg(long, default_value = "personal-agent-device")]
+        #[arg(long, default_value = pa_oidc::DEFAULT_DEVICE_CLIENT_ID)]
         client: String,
         /// Directory the agent may operate in
         #[arg(long, default_value = ".")]

@@ -136,16 +136,12 @@ fn uval(f: &Value, k: &str, default: u16) -> u16 {
         .unwrap_or(default)
 }
 
-/// A rustls connector pinned to webpki roots and http/1.1 ALPN (so Caddy doesn't
-/// pick h2, which tungstenite's HTTP/1.1 WebSocket upgrade can't ride).
+/// A rustls connector on the workspace's shared trust store, with ALPN pinned to http/1.1 (so
+/// Caddy doesn't negotiate h2, which the HTTP/1.1 WebSocket upgrade can't ride).
 fn tls_connector() -> Connector {
-    let mut roots = rustls::RootCertStore::empty();
-    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    let mut cfg = rustls::ClientConfig::builder()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-    cfg.alpn_protocols = vec![b"http/1.1".to_vec()];
-    Connector::Rustls(Arc::new(cfg))
+    // Same trust store as every HTTP call in the workspace -- an internal CA has to
+    // work for the control socket too, or the login succeeds and the stream does not.
+    Connector::Rustls(Arc::new(pa_oidc::tls::ws_tls_config()))
 }
 
 async fn serve(cfg: &Config, coding: &CodingWorkspaces, home: &Option<HomeIndex>) -> Result<()> {

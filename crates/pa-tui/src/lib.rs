@@ -49,6 +49,10 @@ pub async fn login(
 ) -> Result<()> {
     i18n::init_from(lang.as_deref());
     let disco = pa_oidc::discover(&server, issuer.as_deref()).await?;
+    // Which client to authenticate as is the server's call unless the user overrode it: the
+    // compiled-in default only exists in the shipped Keycloak realm, and against any other
+    // provider it fails with a bare `invalid_client` that names nothing.
+    let client = disco.client_id(&client, client == pa_oidc::DEFAULT_DEVICE_CLIENT_ID);
     let tokens = oidc::device_login(&disco.endpoints, &client).await?;
     let cfg = Config {
         server,

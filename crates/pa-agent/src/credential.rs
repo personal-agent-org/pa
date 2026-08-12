@@ -76,7 +76,7 @@ pub async fn run(operation: &str) -> Result<()> {
 }
 
 async fn resolve(cfg: &config::Config, host: &str) -> Result<Option<(String, String)>> {
-    let http = reqwest::Client::new();
+    let http = pa_oidc::tls::http_client();
     let base = cfg.server.trim_end_matches('/');
     let resp = if let Some(sandbox_token) = cfg.sandbox_token.as_deref() {
         // Cloud sandbox: no OIDC — authenticate with the sandbox token + device id.
