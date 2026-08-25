@@ -3,8 +3,9 @@ resolver = "2"
 members = ["crates/pa-oidc", "crates/pa-tui", "crates/pa-gui", "crates/pa"]
 
 [workspace.package]
-version = "2026.8.0"
+version = "2026.8.0"  # CalVer: YYYY.M.MICRO, as in the backend
 edition = "2021"
+license = "MIT"
 
 [profile.release]
 strip = true
