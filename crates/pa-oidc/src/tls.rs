@@ -101,7 +101,7 @@ mod tests {
     fn the_trust_store_is_never_empty() {
         // Whatever the machine looks like -- system store, no system store, CI container --
         // there must be roots, or every HTTPS call fails with UnknownIssuer.
-        assert!(root_store().len() > 0);
+        assert!(!root_store().is_empty());
     }
 
     #[test]
