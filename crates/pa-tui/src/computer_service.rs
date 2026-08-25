@@ -29,12 +29,12 @@ fn binary_path() -> Result<PathBuf> {
         return Ok(PathBuf::from(base)
             .join("PersonalAgent")
             .join("bin")
-            .join("computer-service.exe"));
+            .join("pacs.exe"));
     }
     #[cfg(not(windows))]
     {
         let home = dirs::home_dir().context(t(Msg::ComputerServiceNoHome))?;
-        Ok(home.join(".local").join("bin").join("computer-service"))
+        Ok(home.join(".local").join("bin").join("pacs"))
     }
 }
 
