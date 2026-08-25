@@ -1,6 +1,6 @@
 //! `pa` — Personal Agent's terminal and desktop chat clients. This process consumes the
 //! chat API and never exposes tools or host capabilities to the backend; that is the separate
-//! `computer-service` responsibility.
+//! `pacs` (the Computer Service CLI) responsibility.
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};

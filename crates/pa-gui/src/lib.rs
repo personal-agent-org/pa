@@ -97,12 +97,10 @@ fn enroll_terminal_access(app: &tauri::AppHandle) {
     });
 }
 
-// Where the chosen server URL is persisted (per-user app config dir).
-fn server_file(app: &tauri::AppHandle) -> Option<PathBuf> {
-    app.path()
-        .app_config_dir()
-        .ok()
-        .map(|d| d.join("server-url"))
+// Where the chosen server URL is persisted. Desktop/TUI configuration is always per-user and
+// intentionally never falls back to /etc.
+fn server_file(_app: &tauri::AppHandle) -> Option<PathBuf> {
+    dirs::config_dir().map(|d| d.join("personal-agent").join("desktop").join("server-url"))
 }
 
 fn read_server(app: &tauri::AppHandle) -> Option<String> {
@@ -244,14 +242,30 @@ fn reply(
 // device flow, run it as a systemd user service) + configure which tools it exposes. ---
 
 fn computer_service_bin_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".local").join("bin").join("computer-service"))
+    dirs::home_dir().map(|h| h.join(".local").join("bin").join("pacs"))
+}
+
+fn computer_service_user_config_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|d| {
+        d.join("personal-agent")
+            .join("computer-service")
+            .join("config.toml")
+    })
 }
 
 fn computer_service_config_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| {
-        d.join("personal-agent-computer-service")
-            .join("config.toml")
-    })
+    let user = computer_service_user_config_path()?;
+    if user.is_file() {
+        return Some(user);
+    }
+    #[cfg(unix)]
+    {
+        let system = PathBuf::from("/etc/personal-agent/computer-service/config.toml");
+        if system.is_file() {
+            return Some(system);
+        }
+    }
+    Some(user)
 }
 
 fn default_workspace() -> String {

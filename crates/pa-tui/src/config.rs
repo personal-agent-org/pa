@@ -1,4 +1,5 @@
-//! `pa` chat-client config — stored at ~/.config/personal-agent-pa/config.toml (mode 0600).
+//! `pa` desktop/TUI chat-client config — stored at
+//! `~/.config/personal-agent/desktop/config.toml` (mode 0600). It is never loaded from `/etc`.
 //!
 //! The OIDC device-flow logs the user in from a headless terminal, and the access/refresh
 //! tokens are persisted so a later
@@ -36,7 +37,8 @@ impl Config {
 pub fn config_path() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("personal-agent-pa")
+        .join("personal-agent")
+        .join("desktop")
         .join("config.toml")
 }
 
