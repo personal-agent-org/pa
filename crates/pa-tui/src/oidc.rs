@@ -3,7 +3,7 @@
 //! and we poll for tokens. The access token is then sent as `Authorization: Bearer` on every
 //! REST/SSE call (and as the `bearer,<jwt>` subprotocol on the control WS).
 //!
-//! Works against a Keycloak-fronted backend AND one running its own local identity provider:
+//! Works with external OIDC and with the backend's local identity provider:
 //! the endpoints come from the server's client-config, not from the issuer's URL shape.
 
 use anyhow::Result;
@@ -31,14 +31,7 @@ pub async fn device_login(endpoints: &Endpoints, client_id: &str) -> Result<Toke
     pa_oidc::device_login(endpoints, client_id, &TuiPrompt).await
 }
 
-/// Exchange a refresh token for a fresh access (+ refresh) token. `token_endpoint` is the one
-/// persisted at login; it falls back to the Keycloak shape derived from `issuer`.
-pub async fn refresh(
-    token_endpoint: Option<&str>,
-    issuer: &str,
-    client_id: &str,
-    refresh_token: &str,
-) -> Result<Tokens> {
-    let endpoint = pa_oidc::token_endpoint(token_endpoint, issuer);
-    pa_oidc::refresh(&endpoint, client_id, refresh_token).await
+/// Exchange a refresh token at the endpoint discovered and persisted during login.
+pub async fn refresh(token_endpoint: &str, client_id: &str, refresh_token: &str) -> Result<Tokens> {
+    pa_oidc::refresh(token_endpoint, client_id, refresh_token).await
 }

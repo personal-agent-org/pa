@@ -25,7 +25,7 @@ jobs:
           cp icons/256x256.png icons/128x128@2x.png && cp icons/512x512.png icons/icon.png
       - run: cargo fmt --check
       - run: cargo clippy --workspace -- -D warnings
-      - name: Build headless (tui + service)
+      - name: Build terminal client
         run: cargo build --release
       - name: Build with the GUI feature
         run: cargo build --release --features gui

@@ -1,8 +1,7 @@
 name: Release
 
-# CalVer (YYYY.M.MICRO), run manually. Builds the headless `pa` (terminal UI + device
-# service, no webview) for every platform, tags, and uploads the per-platform binaries.
-# The backend serves these as the unified client. The `desktop-linux` job then builds the
+# CalVer (YYYY.M.MICRO), run manually. Builds the terminal `pa` chat client for every platform,
+# tags, and uploads the per-platform binaries. The `desktop-linux` job then builds the
 # gui-enabled bundle (.deb + AppImage) via the Tauri bundler and attaches it to the release.
 on:
   workflow_dispatch:
@@ -39,7 +38,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      # Headless build: pa-gui is a workspace member but NOT compiled here (no --features gui),
+      # Terminal build: pa-gui is a workspace member but NOT compiled here (no --features gui),
       # so no webview toolchain is needed on any runner.
       - name: Build pa (headless) for ${{ matrix.target }}
         run: cargo build --release --target ${{ matrix.target }} -p pa

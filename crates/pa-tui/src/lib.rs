@@ -7,6 +7,7 @@ mod agui;
 mod api;
 mod app;
 mod composer;
+mod computer_service;
 mod config;
 mod i18n;
 mod oidc;
@@ -24,7 +25,7 @@ use api::ApiClient;
 use config::Config;
 use i18n::{t, Msg};
 
-/// Pick the UI language from an explicit value / `PA_TUI_LANG` / the system locale.
+/// Pick the UI language from an explicit value / `PA_LANG` / the system locale.
 pub fn init_i18n(lang: Option<&str>) {
     i18n::init_from(lang);
 }
@@ -34,12 +35,15 @@ pub async fn run() -> Result<()> {
     let cfg = config::load()?;
     i18n::init_from(cfg.lang.as_deref());
     let client = Arc::new(ApiClient::new(&cfg)?);
-    app::run(client).await
+    if let Some(name) = app::run(client.clone()).await? {
+        computer_service::install(client.as_ref(), &name).await?;
+    }
+    Ok(())
 }
 
 /// Log in via the device flow (Keycloak or the backend's local identity provider) and store the
-/// connection config. `issuer` is optional: the server's client-config advertises it (and the
-/// device endpoints), so only an override needs to be passed.
+/// connection config. Authentication mode, device endpoints and client id are discovered from
+/// the backend.
 /// Run the device grant for `server` and persist TERMINAL credentials.
 ///
 /// The desktop window and the terminal UI authenticate separately: the window loads the SPA and
@@ -54,14 +58,13 @@ pub async fn enroll_terminal_access<P: pa_oidc::Prompt>(
     server: &str,
     prompt: &P,
 ) -> Result<std::path::PathBuf> {
-    let disco = pa_oidc::discover(server, None).await?;
-    let client = disco.client_id(pa_oidc::DEFAULT_DEVICE_CLIENT_ID, true);
+    let disco = pa_oidc::discover(server).await?;
+    let client = disco.device_client_id;
     let tokens = pa_oidc::device_login(&disco.endpoints, &client, prompt).await?;
     let cfg = Config {
         server: server.trim_end_matches('/').to_string(),
-        issuer: disco.issuer,
         client_id: client,
-        token_endpoint: Some(disco.endpoints.token),
+        token_endpoint: disco.endpoints.token,
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
         org: None,
@@ -72,25 +75,15 @@ pub async fn enroll_terminal_access<P: pa_oidc::Prompt>(
     Ok(config::config_path())
 }
 
-pub async fn login(
-    server: String,
-    issuer: Option<String>,
-    client: String,
-    org: Option<String>,
-    lang: Option<String>,
-) -> Result<()> {
+pub async fn login(server: String, org: Option<String>, lang: Option<String>) -> Result<()> {
     i18n::init_from(lang.as_deref());
-    let disco = pa_oidc::discover(&server, issuer.as_deref()).await?;
-    // Which client to authenticate as is the server's call unless the user overrode it: the
-    // compiled-in default only exists in the shipped Keycloak realm, and against any other
-    // provider it fails with a bare `invalid_client` that names nothing.
-    let client = disco.client_id(&client, client == pa_oidc::DEFAULT_DEVICE_CLIENT_ID);
+    let disco = pa_oidc::discover(&server).await?;
+    let client = disco.device_client_id;
     let tokens = oidc::device_login(&disco.endpoints, &client).await?;
     let cfg = Config {
         server,
-        issuer: disco.issuer,
         client_id: client,
-        token_endpoint: Some(disco.endpoints.token),
+        token_endpoint: disco.endpoints.token,
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
         org,

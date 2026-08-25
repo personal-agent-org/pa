@@ -1,6 +1,6 @@
-//! `pa` — the Personal Agent multitool. One binary bundles the terminal chat UI, the
-//! (future) desktop GUI, and the device service (agent). Each surface lives in its own
-//! library crate; this binary is just the clap dispatch plus the one-time TLS setup.
+//! `pa` — Personal Agent's terminal and desktop chat clients. This process consumes the
+//! chat API and never exposes tools or host capabilities to the backend; that is the separate
+//! `computer-service` responsibility.
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "pa",
     version,
-    about = "Personal Agent - one binary: terminal UI, desktop GUI, device service"
+    about = "Personal Agent chat client - terminal UI and desktop GUI"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -23,13 +23,6 @@ enum Cmd {
         /// Personal Agent base URL, e.g. https://pa.example.com
         #[arg(long)]
         server: String,
-        /// Keycloak issuer override, e.g. https://id.example.com/realms/personal-agent.
-        /// Optional: the server advertises it (and the device endpoints) via client-config.
-        #[arg(long)]
-        issuer: Option<String>,
-        /// OIDC client id for the device flow.
-        #[arg(long, default_value = pa_oidc::DEFAULT_DEVICE_CLIENT_ID)]
-        client: String,
         /// Optional active org (X-Personal-Agent-Org); omit to use the token default.
         #[arg(long)]
         org: Option<String>,
@@ -41,47 +34,6 @@ enum Cmd {
     Logout,
     /// Open the desktop GUI window (requires a gui-enabled build).
     Gui,
-    /// Device service: connect this machine and serve coding tools.
-    Service {
-        #[command(subcommand)]
-        cmd: ServiceCmd,
-    },
-}
-
-#[derive(Subcommand)]
-enum ServiceCmd {
-    /// Log in via the device flow (OIDC or the server's local login) and store the config.
-    Enroll {
-        /// Personal Agent base URL, e.g. https://pa.example.com
-        #[arg(long)]
-        server: String,
-        /// Device id (from the Geräte tab)
-        #[arg(long)]
-        device: String,
-        /// Keycloak issuer override, e.g. https://id.example.com/realms/personal-agent.
-        /// Optional: the server advertises it (and the device endpoints) via client-config.
-        #[arg(long)]
-        issuer: Option<String>,
-        /// OIDC client id for the device flow
-        #[arg(long, default_value = pa_oidc::DEFAULT_DEVICE_CLIENT_ID)]
-        client: String,
-        /// Directory the agent may operate in
-        #[arg(long, default_value = ".")]
-        workspace: String,
-    },
-    /// Connect and serve tool calls.
-    #[command(alias = "start")]
-    Run,
-    /// Print the available coding tools (name + description) as JSON. The desktop app uses
-    /// this to render the per-device tool-exposure toggles.
-    Tools,
-    /// Git credential helper (invoked by git for Personal-Agent-cloned repos). Internal.
-    #[command(hide = true)]
-    CredentialHelper {
-        /// git credential operation: get | store | erase
-        #[arg(default_value = "get")]
-        operation: String,
-    },
 }
 
 /// True when nobody is at a terminal, in a build that HAS a GUI to fall back on.
@@ -109,7 +61,7 @@ fn main() -> Result<()> {
     // No subcommand means "open the thing the user asked for", and that depends on HOW they
     // asked. From a terminal it is the TUI, as always. Launched from a desktop entry there is
     // no terminal at all: the TUI then draws into nothing and, on a machine without
-    // `pa login`, exits with "not signed in - run `personal-agent-tui login` first" - advice
+    // `pa login`, exits with "not signed in - run `pa login` first" - advice
     // that cannot be followed from a window that isn't a terminal, for a config file the GUI
     // does not even use. The desktop bundle IS this binary, so the same argv has to serve both.
     if matches!(cli.cmd, Some(Cmd::Gui)) || (cli.cmd.is_none() && launched_from_a_desktop_entry()) {
@@ -130,29 +82,9 @@ async fn async_main(cli: Cli) -> Result<()> {
 
     match cli.cmd {
         None => pa_tui::run().await,
-        Some(Cmd::Login {
-            server,
-            issuer,
-            client,
-            org,
-            lang,
-        }) => pa_tui::login(server, issuer, client, org, lang).await,
+        Some(Cmd::Login { server, org, lang }) => pa_tui::login(server, org, lang).await,
         Some(Cmd::Logout) => pa_tui::logout().await,
         Some(Cmd::Gui) => unreachable!("gui is dispatched before the async runtime"),
-        Some(Cmd::Service { cmd }) => match cmd {
-            ServiceCmd::Enroll {
-                server,
-                device,
-                issuer,
-                client,
-                workspace,
-            } => pa_agent::enroll(server, device, issuer, client, workspace).await,
-            ServiceCmd::Run => pa_agent::run().await,
-            ServiceCmd::Tools => pa_agent::tools().await,
-            ServiceCmd::CredentialHelper { operation } => {
-                pa_agent::credential_helper(&operation).await
-            }
-        },
     }
 }
 

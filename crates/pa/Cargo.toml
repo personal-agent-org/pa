@@ -2,23 +2,20 @@
 name = "pa"
 version.workspace = true
 edition.workspace = true
-description = "Personal Agent - one binary: terminal UI, desktop GUI, device service"
+description = "Personal Agent chat clients - terminal UI and desktop GUI"
 
 [[bin]]
 name = "pa"
 path = "src/main.rs"
 
 [features]
-# The desktop GUI (Tauri). Off by default so the headless `pa` (tui + service) has zero
+# The desktop GUI (Tauri). Off by default so the headless `pa` TUI has zero
 # webview dependency and runs on headless servers; the desktop distribution builds with it.
 gui = ["dep:pa-gui", "dep:tauri"]
 
 [dependencies]
-# For DEFAULT_DEVICE_CLIENT_ID: the flag default and the fallback inside the login must be the
-# SAME string, or "did the user pick this?" cannot be answered.
 pa-oidc = { path = "../pa-oidc" }
 pa-tui = { path = "../pa-tui" }
-pa-agent = { path = "../pa-agent" }
 pa-gui = { path = "../pa-gui", optional = true }
 # Only needed for `generate_context!` in the gui arm; the build-dep runs the tauri-build
 # codegen (guarded on the gui feature in build.rs).

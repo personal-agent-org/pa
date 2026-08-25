@@ -1,6 +1,6 @@
-# Personal Agent unified CLI (`pa`). One binary: tui (default), `pa gui`, `pa service`.
+# Personal Agent chat clients (`pa`): TUI by default, desktop with `pa gui`.
 
-# Headless build (tui + device service; no webview dependency).
+# Terminal build (no webview dependency).
 build:
     cargo build --release
 

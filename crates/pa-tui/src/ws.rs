@@ -3,7 +3,7 @@
 //! Outbound: client frames (`cancel`/`status`/`ping`). Inbound: server pushes (chat-title
 //! changes, tool-approval + agent-question prompts, background-resumed runs, sub-agent
 //! updates, …). Auth rides the `Sec-WebSocket-Protocol: bearer, <token>` subprotocol — the
-//! same scheme as the device-agent (and never the query string). The task auto-reconnects
+//! never the query string. The task auto-reconnects
 //! with backoff, refreshing the token first since an expired token is the usual cause.
 
 use std::sync::Arc;

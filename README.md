@@ -1,33 +1,32 @@
-# pa - Personal Agent CLI
+# `pa` — Personal Agent chat clients
 
-One binary, three faces:
+One repository and one binary for the terminal and desktop chat experiences:
 
-```
+```bash
 pa                      # terminal chat UI (default)
-pa login --server …     # device-flow login (OIDC or the server's local identity provider)
+pa login --server …     # terminal login
 pa logout
-pa gui                  # desktop window (gui-enabled build only)
-pa service enroll --server … --device …   # same login, then serve tools
-pa service start        # connect this machine + serve coding tools (alias: run)
-pa service tools        # print the coding-tool catalog (JSON)
+pa gui                  # desktop window (GUI-enabled build)
 ```
+
+Both surfaces are clients of the same HTTP/SSE/control-WebSocket API. They do not announce tools,
+sensors, filesystem access, or other host functions to the backend. Computer capabilities are
+provided exclusively by the separate
+[`computer-service`](https://github.com/personal-agent-org/computer-service).
+
+Both clients offer installation of that separate background service: the desktop from Settings,
+the TUI through `/computer-service [device name]`. The service runs as its own process with its
+own device-bound credential. Desktop/TUI chat tokens are never shared with it.
 
 ## Builds
 
-Two flavours from one source:
-
-- **headless** (`cargo build --release`, or `just build`): terminal UI + device service.
-  Zero webview dependency, runs on headless servers. This is the `pa` shipped by the
-  one-liner install and served to TUI users.
-- **desktop** (`cargo build --release --features gui`, or `just build-gui`): the same `pa`
-  plus the Tauri GUI, so `pa gui` opens the app window. Needs a platform webview at runtime
-  (webkit2gtk on Linux, WebView2 on Windows, WKWebView on macOS). This is the AppImage/.deb
-  distribution.
-
-`pa gui` on a headless build prints a hint and exits; the GUI is compiled in only with
-`--features gui`, so servers never drag in the webview.
+- **Terminal:** `cargo build --release` or `just build`. No webview dependency.
+- **Desktop:** `cargo build --release --features gui` or `just build-gui`. Uses Tauri and the
+  platform webview.
 
 ## Layout
 
-`crates/pa` (bin, clap dispatch) depends on `crates/pa-tui` and `crates/pa-agent`
-(libraries); `crates/pa-gui` (the Tauri app) is linked only behind the `gui` feature.
+- `crates/pa`: binary and command dispatch
+- `crates/pa-tui`: terminal chat client
+- `crates/pa-gui`: desktop chat shell and local Computer Service management
+- `crates/pa-oidc`: chat-client device-flow authentication

@@ -8,5 +8,14 @@
   "tray_open": "Open Personal Agent",
   "tray_change": "Change server",
   "tray_hide": "Hide to tray",
-  "tray_quit": "Quit"
+  "tray_quit": "Quit",
+  "computer_service_download": "Downloading Computer Service ({platform})…",
+  "computer_service_download_failed": "Download failed",
+  "computer_service_enroll": "Sign in (confirm in your browser)…",
+  "computer_service_enroll_failed": "Sign-in failed",
+  "computer_service_setup": "Setting up the systemd user service…",
+  "computer_service_start_failed": "The service could not be started",
+  "computer_service_linux_only": "Automatic service setup is currently supported on Linux only",
+  "computer_service_done": "Done ✓",
+  "computer_service_no_home": "No home directory is available"
 }
