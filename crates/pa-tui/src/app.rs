@@ -171,7 +171,7 @@ const MAX_ATTACHMENTS: usize = 6;
 
 /// Built-in client-side actions (UI ops, not prompts). Prompt-style commands are NOT
 /// hardcoded here — they come from the server as custom commands (`GET /commands`).
-const COMMANDS: [&str; 19] = [
+const COMMANDS: [&str; 20] = [
     "/btw",
     "/retry",
     "/steer",
@@ -189,6 +189,7 @@ const COMMANDS: [&str; 19] = [
     "/summarize",
     "/proofread",
     "/inbox",
+    "/computer-service",
     "/logout",
     "/help",
 ];
@@ -544,6 +545,8 @@ pub struct App {
     pub scroll: usize, // lines scrolled up from the bottom (0 = stuck to bottom)
     pub spinner: usize,
     pub should_quit: bool,
+    /// Set by `/computer-service`; installation starts only after raw mode has been restored.
+    pub computer_service_request: Option<String>,
 }
 
 impl App {
@@ -613,6 +616,7 @@ impl App {
             scroll: 0,
             spinner: 0,
             should_quit: false,
+            computer_service_request: None,
         }
     }
 
@@ -1134,6 +1138,14 @@ impl App {
                     self.spawn_conversations();
                 }
                 self.view = View::Inbox;
+            }
+            "/computer-service" => {
+                self.computer_service_request = Some(if rest.is_empty() {
+                    "Computer".to_string()
+                } else {
+                    rest.to_string()
+                });
+                self.should_quit = true;
             }
             "/help" => self.popup = Popup::Help,
             "/logout" => self.logout(),
@@ -2964,7 +2976,7 @@ fn convert_message(m: api::Message) -> UiMessage {
 }
 
 /// Set up the terminal, run the event loop, and restore the terminal on exit.
-pub async fn run(client: Arc<ApiClient>) -> Result<()> {
+pub async fn run(client: Arc<ApiClient>) -> Result<Option<String>> {
     use crossterm::execute;
     use crossterm::terminal::{
         disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -3004,7 +3016,7 @@ pub async fn run(client: Arc<ApiClient>) -> Result<()> {
 async fn event_loop<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     client: Arc<ApiClient>,
-) -> Result<()> {
+) -> Result<Option<String>> {
     let (tx, mut rx) = mpsc::unbounded_channel::<AppMsg>();
     let mut app = App::new(client.clone(), tx.clone());
     app.ws = Some(ws::spawn(client, tx.clone()));
@@ -3030,7 +3042,7 @@ async fn event_loop<B: ratatui::backend::Backend>(
             _ = tick.tick() => app.tick(),
         }
     }
-    Ok(())
+    Ok(app.computer_service_request)
 }
 
 #[cfg(test)]

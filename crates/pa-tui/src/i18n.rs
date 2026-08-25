@@ -2,7 +2,7 @@
 //! language is chosen once at startup and the call sites stay declarative. German is the
 //! default (the product is German-first); English is selectable. Code and docs stay English.
 //!
-//! Language resolution order: an explicit value (config `lang`), the `PA_TUI_LANG` env var,
+//! Language resolution order: an explicit value (config `lang`), the `PA_LANG` env var,
 //! then the system `LANG` locale — otherwise German.
 
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -20,7 +20,7 @@ static LANG: AtomicU8 = AtomicU8::new(0);
 pub fn init_from(explicit: Option<&str>) {
     let lang = explicit
         .and_then(parse)
-        .or_else(|| std::env::var("PA_TUI_LANG").ok().and_then(|v| parse(&v)))
+        .or_else(|| std::env::var("PA_LANG").ok().and_then(|v| parse(&v)))
         .or_else(|| std::env::var("LANG").ok().and_then(|v| system(&v)))
         .unwrap_or(Lang::De);
     LANG.store(if lang == Lang::En { 2 } else { 1 }, Ordering::Relaxed);
@@ -236,6 +236,18 @@ pub enum Msg<'a> {
     LoginStartHint,
     LogoutDone(&'a str),
     LogoutNone,
+    // Computer Service installer (launched from the TUI after restoring the terminal)
+    ComputerServiceUnsupported(&'a str, &'a str),
+    #[cfg(windows)]
+    ComputerServiceNoLocalAppData,
+    #[cfg(not(windows))]
+    ComputerServiceNoHome,
+    ComputerServiceReserve(&'a str),
+    ComputerServiceDownload,
+    ComputerServiceEnroll,
+    ComputerServiceLaunchFailed,
+    ComputerServiceEnrollFailed,
+    ComputerServiceInstalled(&'a str),
 }
 
 fn pick(de: &str, en_s: &str) -> String {
@@ -662,9 +674,9 @@ pub fn t(m: Msg) -> String {
         }
         Msg::ConfigNotEnrolled(path) => {
             if en() {
-                format!("not signed in — run `personal-agent-tui login` first ({path})")
+                format!("not signed in — run `pa login` first ({path})")
             } else {
-                format!("nicht angemeldet — zuerst `personal-agent-tui login` ausführen ({path})")
+                format!("nicht angemeldet — zuerst `pa login` ausführen ({path})")
             }
         }
         Msg::ApiRefreshFailed => pick(
@@ -679,8 +691,8 @@ pub fn t(m: Msg) -> String {
             }
         }
         Msg::LoginStartHint => pick(
-            "Start the UI with: personal-agent-tui",
-            "Start the UI with: personal-agent-tui",
+            "Start the UI with: pa",
+            "Start the UI with: pa",
         ),
         Msg::LogoutDone(path) => {
             if en() {
@@ -691,6 +703,53 @@ pub fn t(m: Msg) -> String {
         }
         Msg::LogoutNone => {
             pick("Keine gespeicherte Anmeldung gefunden.", "No stored sign-in found.")
+        }
+        Msg::ComputerServiceUnsupported(os, arch) => {
+            if en() {
+                format!("Computer Service is not released for {os}/{arch}")
+            } else {
+                format!("Computer Service ist für {os}/{arch} nicht verfügbar")
+            }
+        }
+        #[cfg(windows)]
+        Msg::ComputerServiceNoLocalAppData => pick(
+            "LOCALAPPDATA ist nicht verfügbar",
+            "LOCALAPPDATA is unavailable",
+        ),
+        #[cfg(not(windows))]
+        Msg::ComputerServiceNoHome => pick(
+            "Home-Verzeichnis ist nicht verfügbar",
+            "home directory is unavailable",
+        ),
+        Msg::ComputerServiceReserve(name) => {
+            if en() {
+                format!("Reserving computer device ‘{name}’ …")
+            } else {
+                format!("Computer-Gerät „{name}“ wird angelegt …")
+            }
+        }
+        Msg::ComputerServiceDownload => pick(
+            "Computer Service wird heruntergeladen …",
+            "Downloading Computer Service …",
+        ),
+        Msg::ComputerServiceEnroll => pick(
+            "Separate Anmeldung für Computer Service wird gestartet …",
+            "Starting the separate Computer Service enrollment …",
+        ),
+        Msg::ComputerServiceLaunchFailed => pick(
+            "Computer-Service-Anmeldung konnte nicht gestartet werden",
+            "could not start Computer Service enrollment",
+        ),
+        Msg::ComputerServiceEnrollFailed => pick(
+            "Computer-Service-Anmeldung fehlgeschlagen",
+            "Computer Service enrollment failed",
+        ),
+        Msg::ComputerServiceInstalled(path) => {
+            if en() {
+                format!("Installed. Start it with: {path} run")
+            } else {
+                format!("Installiert. Starten mit: {path} run")
+            }
         }
     }
 }
@@ -815,6 +874,13 @@ fn cmd_desc(name: &str) -> String {
                 "Open the inbox"
             } else {
                 "Posteingang öffnen"
+            }
+        }
+        "/computer-service" => {
+            if en {
+                "Install Computer Service [device name]"
+            } else {
+                "Computer Service installieren [Gerätename]"
             }
         }
         "/logout" => {

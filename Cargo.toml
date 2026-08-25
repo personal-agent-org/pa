@@ -1,10 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["crates/pa-oidc", "crates/pa-tui", "crates/pa-agent",
-    "crates/pa-gui", "crates/pa"]
+members = ["crates/pa-oidc", "crates/pa-tui", "crates/pa-gui", "crates/pa"]
 
 [workspace.package]
-version = "2026.7.0"
+version = "2026.8.0"
 edition = "2021"
 
 [profile.release]

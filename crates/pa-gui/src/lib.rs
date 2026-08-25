@@ -4,19 +4,19 @@
 // Beyond the window it adds:
 //   - single-instance (a 2nd launch focuses the running window),
 //   - window-state persistence (size/position across launches),
-//   - an in-window navigation allowlist (the SPA + its same-domain Keycloak stay in-window;
+//   - an in-window navigation allowlist (the SPA + its discovered external IdP stay in-window;
 //     everything else opens in the system browser),
 //   - a system tray + close-to-tray (the SPA keeps running in the background so its
 //     control-WS push events still arrive), with a "change server" action,
 //   - a NARROW native bridge (`window.personalAgentNative`) the SPA already knows how to talk
 //     to: it surfaces background pushes (nudge/draft/approval/question) as OS notifications and
 //     opens external links natively. The bridge sets `ownsAuth:false` so the SPA keeps its
-//     normal in-window Keycloak web login.
+//     normal SPA-managed external-OIDC or local login.
 //
 // Security: the bridge's single `native_bridge` command has a fixed vocabulary (no fs/shell/
 // exec). The IPC remote.urls allowlist is a wildcard because the server is runtime-chosen, but
-// the `on_navigation` allowlist below is the real guard: only the chosen instance + its
-// same-domain Keycloak ever load in the webview, so only those origins can reach the bridge.
+// the `on_navigation` allowlist below is the real guard: only the chosen instance + the exact
+// external OIDC origin advertised by the backend load in the webview.
 
 use serde_json::{json, Value};
 use std::fs;
@@ -131,6 +131,18 @@ fn locale_map() -> serde_json::Map<String, Value> {
         .unwrap_or_default()
 }
 
+fn cli_lang() -> &'static str {
+    if sys_locale::get_locale()
+        .unwrap_or_default()
+        .to_lowercase()
+        .starts_with("de")
+    {
+        "de"
+    } else {
+        "en"
+    }
+}
+
 fn tr(map: &serde_json::Map<String, Value>, key: &str, fallback: &str) -> String {
     map.get(key)
         .and_then(Value::as_str)
@@ -138,15 +150,28 @@ fn tr(map: &serde_json::Map<String, Value>, key: &str, fallback: &str) -> String
         .to_string()
 }
 
-// The registrable-ish domain = the last two dot labels (pa.example.com -> example.com), so the
-// app + a same-domain Keycloak (id.example.com) stay in-window. Not eTLD-aware; fine here.
-fn base_domain(host: &str) -> String {
-    let parts: Vec<&str> = host.split('.').collect();
-    if parts.len() >= 2 {
-        parts[parts.len() - 2..].join(".")
-    } else {
-        host.to_string()
+// Exact origins the webview may navigate to. The backend is always included; an external OIDC
+// issuer is included only when the backend advertises it. Local auth therefore adds no origin.
+fn discovered_navigation_origins(server: &tauri::Url) -> std::collections::HashSet<String> {
+    let mut origins = std::collections::HashSet::from([server.origin().ascii_serialization()]);
+    let config_url = format!(
+        "{}/api/v1/public/client-config",
+        server.as_str().trim_end_matches('/')
+    );
+    let Ok(response) = ureq::get(&config_url).call() else {
+        return origins;
+    };
+    let Ok(config) = serde_json::from_reader::<_, Value>(response.into_reader()) else {
+        return origins;
+    };
+    if config.get("auth_mode").and_then(Value::as_str) == Some("oidc") {
+        if let Some(issuer) = config.get("oidc_issuer").and_then(Value::as_str) {
+            if let Ok(url) = tauri::Url::parse(issuer) {
+                origins.insert(url.origin().ascii_serialization());
+            }
+        }
     }
+    origins
 }
 
 #[tauri::command]
@@ -214,19 +239,19 @@ fn reply(
     let _ = window.eval(&js);
 }
 
-// --- Device-agent: connect THIS computer as a device (download the agent, enroll via the OIDC
+// --- Computer Service: connect THIS computer as a device (download the separate service, verify
+// ownership via OIDC once,
 // device flow, run it as a systemd user service) + configure which tools it exposes. ---
 
-fn agent_bin_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| {
-        h.join(".local")
-            .join("bin")
-            .join("personal-agent-device-agent")
-    })
+fn computer_service_bin_path() -> Option<PathBuf> {
+    dirs::home_dir().map(|h| h.join(".local").join("bin").join("computer-service"))
 }
 
-fn agent_config_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("personal-agent-device").join("config.toml"))
+fn computer_service_config_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|d| {
+        d.join("personal-agent-computer-service")
+            .join("config.toml")
+    })
 }
 
 fn default_workspace() -> String {
@@ -236,7 +261,7 @@ fn default_workspace() -> String {
 }
 
 // The release-asset slug the backend serves the binary under (linux is x64-only; macOS arm64).
-fn agent_platform_slug() -> &'static str {
+fn computer_service_platform_slug() -> &'static str {
     if cfg!(target_os = "windows") {
         "windows-x64"
     } else if cfg!(target_os = "macos") {
@@ -248,7 +273,7 @@ fn agent_platform_slug() -> &'static str {
 
 // Push a one-line progress update to the SPA (the desktop settings show the latest line).
 fn emit_progress(window: &tauri::WebviewWindow, msg: &str) {
-    let obj = json!({ "type": "device-agent/progress", "payload": { "message": msg } });
+    let obj = json!({ "type": "computer-service/progress", "payload": { "message": msg } });
     let js = format!(
         "window.personalAgentNativeCallback && window.personalAgentNativeCallback({})",
         obj
@@ -261,19 +286,14 @@ fn systemd_unit_path() -> Option<PathBuf> {
     dirs::config_dir().map(|d| {
         d.join("systemd")
             .join("user")
-            .join("personal-agent-device-agent.service")
+            .join("computer-service.service")
     })
 }
 
 #[cfg(target_os = "linux")]
 fn service_active() -> bool {
     std::process::Command::new("systemctl")
-        .args([
-            "--user",
-            "is-active",
-            "--quiet",
-            "personal-agent-device-agent.service",
-        ])
+        .args(["--user", "is-active", "--quiet", "computer-service.service"])
         .status()
         .is_ok_and(|s| s.success())
 }
@@ -283,15 +303,15 @@ fn service_active() -> bool {
     false
 }
 
-fn device_agent_status() -> Value {
-    let installed = agent_bin_path().is_some_and(|p| p.exists());
-    let enrolled = agent_config_path().is_some_and(|p| p.exists());
+fn computer_service_status() -> Value {
+    let installed = computer_service_bin_path().is_some_and(|p| p.exists());
+    let enrolled = computer_service_config_path().is_some_and(|p| p.exists());
     json!({ "installed": installed, "enrolled": enrolled, "running": service_active() })
 }
 
-// Read the tool-exposure flags the agent honours from its config.toml (defaults when absent).
-fn read_agent_flags() -> (Vec<String>, bool) {
-    let Some(path) = agent_config_path() else {
+// Read the tool-exposure flags Computer Service honours from its config.toml.
+fn read_computer_service_flags() -> (Vec<String>, bool) {
+    let Some(path) = computer_service_config_path() else {
         return (Vec::new(), true);
     };
     let Ok(txt) = std::fs::read_to_string(&path) else {
@@ -318,8 +338,8 @@ fn read_agent_flags() -> (Vec<String>, bool) {
 
 // The available tool catalog (from `<bin> tools`) + the current exposure flags, so the desktop
 // settings can render per-tool toggles.
-fn device_agent_config() -> Value {
-    let tools = agent_bin_path()
+fn computer_service_config() -> Value {
+    let tools = computer_service_bin_path()
         .filter(|p| p.exists())
         .and_then(|b| {
             std::process::Command::new(&b)
@@ -330,15 +350,16 @@ fn device_agent_config() -> Value {
                 .and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok())
         })
         .unwrap_or_else(|| json!([]));
-    let (disabled, home) = read_agent_flags();
+    let (disabled, home) = read_computer_service_flags();
     json!({ "tools": tools, "disabledTools": disabled, "exposeHomeIndex": home })
 }
 
-// Persist the exposure flags into the agent config.toml, then restart the service so the new
+// Persist the exposure flags into the Computer Service config, then restart it so the new
 // hello announcement (with the narrowed tool set) takes effect.
-fn set_device_agent_config(disabled: Vec<String>, expose_home: bool) -> Result<(), String> {
-    let path = agent_config_path().ok_or("no config directory")?;
-    let txt = std::fs::read_to_string(&path).map_err(|_| "agent not enrolled".to_string())?;
+fn set_computer_service_config(disabled: Vec<String>, expose_home: bool) -> Result<(), String> {
+    let path = computer_service_config_path().ok_or("no config directory")?;
+    let txt =
+        std::fs::read_to_string(&path).map_err(|_| "Computer Service not enrolled".to_string())?;
     let mut val: toml::Value = txt.parse().map_err(|e| format!("config parse: {e}"))?;
     if let Some(tbl) = val.as_table_mut() {
         tbl.insert(
@@ -364,23 +385,39 @@ fn set_device_agent_config(disabled: Vec<String>, expose_home: bool) -> Result<(
 #[cfg(target_os = "linux")]
 fn restart_service() {
     let _ = std::process::Command::new("systemctl")
-        .args(["--user", "restart", "personal-agent-device-agent.service"])
+        .args(["--user", "restart", "computer-service.service"])
         .status();
 }
 
 #[cfg(not(target_os = "linux"))]
 fn restart_service() {}
 
-fn download_agent(server: &str, dest: &Path, window: &tauri::WebviewWindow) -> Result<(), String> {
+fn download_computer_service(
+    server: &str,
+    dest: &Path,
+    window: &tauri::WebviewWindow,
+) -> Result<(), String> {
     let url = format!(
-        "{}/api/v1/devices/agent/bin/{}",
+        "{}/api/v1/devices/computer-service/bin/{}",
         server.trim_end_matches('/'),
-        agent_platform_slug()
+        computer_service_platform_slug()
     );
-    emit_progress(window, &format!("Lade Agent ({})…", agent_platform_slug()));
-    let resp = ureq::get(&url)
-        .call()
-        .map_err(|e| format!("Download fehlgeschlagen: {e}"))?;
+    let t = locale_map();
+    emit_progress(
+        window,
+        &tr(
+            &t,
+            "computer_service_download",
+            "Downloading Computer Service ({platform})…",
+        )
+        .replace("{platform}", computer_service_platform_slug()),
+    );
+    let resp = ureq::get(&url).call().map_err(|e| {
+        format!(
+            "{}: {e}",
+            tr(&t, "computer_service_download_failed", "Download failed")
+        )
+    })?;
     if let Some(dir) = dest.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
@@ -396,38 +433,38 @@ fn download_agent(server: &str, dest: &Path, window: &tauri::WebviewWindow) -> R
     Ok(())
 }
 
-// Run the agent's OIDC device-flow enrollment, surfacing each status line and opening the
+// Run Computer Service's one-time OIDC ownership check, surfacing each status line and opening the
 // verification URL it prints (so the user just approves in the browser).
-fn enroll_agent(
+fn enroll_computer_service(
     bin: &Path,
     server: &str,
     device: &str,
-    issuer: &str,
-    client: &str,
     workspace: &str,
     window: &tauri::WebviewWindow,
 ) -> Result<(), String> {
     use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};
-    emit_progress(window, "Anmeldung (im Browser bestätigen)…");
-    let mut args = vec![
+    let t = locale_map();
+    emit_progress(
+        window,
+        &tr(
+            &t,
+            "computer_service_enroll",
+            "Sign in (confirm in your browser)…",
+        ),
+    );
+    let args = vec![
         "enroll",
         "--server",
         server,
         "--device",
         device,
-        "--client",
-        client,
         "--workspace",
         workspace,
     ];
-    // --issuer is only an override now: a backend with a local identity provider has none, and
-    // the agent discovers the device endpoints from the server's client-config either way.
-    if !issuer.is_empty() {
-        args.extend_from_slice(&["--issuer", issuer]);
-    }
     let mut child = Command::new(bin)
         .args(&args)
+        .env("PA_LANG", cli_lang())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -455,21 +492,29 @@ fn enroll_agent(
     if status.success() {
         Ok(())
     } else {
-        Err("Anmeldung fehlgeschlagen".into())
+        Err(tr(&t, "computer_service_enroll_failed", "Sign-in failed"))
     }
 }
 
 #[cfg(target_os = "linux")]
 fn enable_service(bin: &Path, window: &tauri::WebviewWindow) -> Result<(), String> {
     use std::process::Command;
-    emit_progress(window, "Richte systemd-User-Service ein…");
+    let t = locale_map();
+    emit_progress(
+        window,
+        &tr(
+            &t,
+            "computer_service_setup",
+            "Setting up the systemd user service…",
+        ),
+    );
     let unit = systemd_unit_path().ok_or("no config directory")?;
     if let Some(dir) = unit.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let contents = format!(
         "[Unit]\n\
-         Description=Personal Agent device agent\n\
+         Description=Personal Agent Computer Service\n\
          After=network-online.target\n\
          Wants=network-online.target\n\n\
          [Service]\n\
@@ -487,39 +532,48 @@ fn enable_service(bin: &Path, window: &tauri::WebviewWindow) -> Result<(), Strin
     // Keep the service running across logouts (best-effort; may prompt for authorization).
     let _ = Command::new("loginctl").arg("enable-linger").status();
     let ok = Command::new("systemctl")
-        .args([
-            "--user",
-            "enable",
-            "--now",
-            "personal-agent-device-agent.service",
-        ])
+        .args(["--user", "enable", "--now", "computer-service.service"])
         .status()
         .is_ok_and(|s| s.success());
     if ok {
         Ok(())
     } else {
-        Err("Service konnte nicht gestartet werden".into())
+        Err(tr(
+            &t,
+            "computer_service_start_failed",
+            "The service could not be started",
+        ))
     }
 }
 
 #[cfg(not(target_os = "linux"))]
 fn enable_service(_bin: &Path, _window: &tauri::WebviewWindow) -> Result<(), String> {
-    Err("Service-Einrichtung wird nur unter Linux unterstützt".into())
+    let t = locale_map();
+    Err(tr(
+        &t,
+        "computer_service_linux_only",
+        "Automatic service setup is currently supported on Linux only",
+    ))
 }
 
-fn install_device_agent(
+fn install_computer_service(
     window: &tauri::WebviewWindow,
     server: &str,
     device: &str,
-    issuer: &str,
-    client: &str,
     workspace: &str,
 ) -> Result<(), String> {
-    let bin = agent_bin_path().ok_or("no home directory")?;
-    download_agent(server, &bin, window)?;
-    enroll_agent(&bin, server, device, issuer, client, workspace, window)?;
+    let t = locale_map();
+    let bin = computer_service_bin_path().ok_or_else(|| {
+        tr(
+            &t,
+            "computer_service_no_home",
+            "No home directory is available",
+        )
+    })?;
+    download_computer_service(server, &bin, window)?;
+    enroll_computer_service(&bin, server, device, workspace, window)?;
     enable_service(&bin, window)?;
-    emit_progress(window, "Fertig ✓");
+    emit_progress(window, &tr(&t, "computer_service_done", "Done ✓"));
     Ok(())
 }
 
@@ -585,21 +639,12 @@ fn native_bridge(window: tauri::WebviewWindow, message: String) {
                 let _ = window.app_handle().opener().open_url(url, None::<&str>);
             }
         }
-        "device-agent/status" => {
-            reply(&window, id, true, device_agent_status(), "");
+        "computer-service/status" => {
+            reply(&window, id, true, computer_service_status(), "");
         }
-        "device-agent/install" => {
+        "computer-service/install" => {
             let server = pstr("server");
             let device = pstr("device");
-            let issuer = pstr("issuer");
-            let client = {
-                let c = pstr("client");
-                if c.is_empty() {
-                    "personal-agent-device".to_string()
-                } else {
-                    c
-                }
-            };
             let workspace = {
                 let w = pstr("workspace");
                 if w.is_empty() {
@@ -609,10 +654,10 @@ fn native_bridge(window: tauri::WebviewWindow, message: String) {
                 }
             };
             // Long-running + interactive (download + device-flow enroll + service): run off the
-            // command thread and reply when done; progress streams as device-agent/progress events.
+            // command thread and reply when done; progress streams as computer-service/progress events.
             let win = window.clone();
             std::thread::spawn(move || {
-                match install_device_agent(&win, &server, &device, &issuer, &client, &workspace) {
+                match install_computer_service(&win, &server, &device, &workspace) {
                     Ok(()) => reply(&win, id, true, json!({ "ok": true }), ""),
                     Err(e) => {
                         emit_progress(&win, &e);
@@ -621,10 +666,10 @@ fn native_bridge(window: tauri::WebviewWindow, message: String) {
                 }
             });
         }
-        "device-agent/config-get" => {
-            reply(&window, id, true, device_agent_config(), "");
+        "computer-service/config-get" => {
+            reply(&window, id, true, computer_service_config(), "");
         }
-        "device-agent/config-set" => {
+        "computer-service/config-set" => {
             let disabled: Vec<String> = payload
                 .and_then(|p| p.get("disabledTools"))
                 .and_then(Value::as_array)
@@ -638,7 +683,7 @@ fn native_bridge(window: tauri::WebviewWindow, message: String) {
                 .and_then(|p| p.get("exposeHomeIndex"))
                 .and_then(Value::as_bool)
                 .unwrap_or(true);
-            match set_device_agent_config(disabled, expose_home) {
+            match set_computer_service_config(disabled, expose_home) {
                 Ok(()) => reply(&window, id, true, json!({ "ok": true }), ""),
                 Err(e) => reply(&window, id, false, Value::Null, &e),
             }
@@ -716,7 +761,7 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
                 // Configured: open the SPA itself, with the native bridge injected.
                 Some(server) => {
                     let url = tauri::Url::parse(&server).expect("stored server URL is invalid");
-                    let app_base = base_domain(url.host_str().unwrap_or(""));
+                    let allowed_origins = discovered_navigation_origins(&url);
                     let nav_handle = handle.clone();
                     let window =
                         WebviewWindowBuilder::new(&handle, "main", WebviewUrl::External(url))
@@ -727,8 +772,10 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
                             .initialization_script(BRIDGE_INIT_JS)
                             .on_navigation(move |nav_url| match nav_url.scheme() {
                                 "http" | "https" => {
-                                    if base_domain(nav_url.host_str().unwrap_or("")) == app_base {
-                                        true // app + same-domain Keycloak stay in-window
+                                    if allowed_origins
+                                        .contains(&nav_url.origin().ascii_serialization())
+                                    {
+                                        true // app + discovered external IdP stay in-window
                                     } else {
                                         // genuinely external -> system browser, don't navigate
                                         let _ = nav_handle

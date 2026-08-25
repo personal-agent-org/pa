@@ -23,11 +23,9 @@ pub struct ApiClient {
     http: reqwest::Client,
     base: String,
     server: String,
-    issuer: String,
     client_id: String,
-    // Where the refresh_token grant lives (discovered at login); None on configs written before
-    // it was persisted, where refresh derives the Keycloak URL from `issuer`.
-    token_endpoint: Option<String>,
+    // Where the refresh_token grant lives, discovered at login.
+    token_endpoint: String,
     org: Option<String>,
     lang: Option<String>,
     tokens: Mutex<TokenState>,
@@ -74,6 +72,11 @@ pub struct Chat {
     /// Last-activity timestamp (ISO 8601, UTC) — shown in the session picker.
     #[serde(default)]
     pub updated_at: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct ComputerDevice {
+    pub id: String,
 }
 
 fn default_mode() -> String {
@@ -348,13 +351,12 @@ impl ApiClient {
         // pa_oidc::tls, not reqwest's own roots: the server may well be behind an internal
         // CA, which the compiled-in Mozilla set knows nothing about.
         let http = pa_oidc::tls::http_client_builder()
-            .user_agent(concat!("personal-agent-tui/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("pa/", env!("CARGO_PKG_VERSION")))
             .build()?;
         Ok(ApiClient {
             http,
             base: cfg.api_base(),
             server: cfg.server.clone(),
-            issuer: cfg.issuer.clone(),
             client_id: cfg.client_id.clone(),
             token_endpoint: cfg.token_endpoint.clone(),
             org: cfg.org.clone(),
@@ -405,20 +407,14 @@ impl ApiClient {
     /// Refresh the access token, persist it, and return the fresh access token.
     async fn refresh_token(&self) -> Result<String> {
         let mut guard = self.tokens.lock().await;
-        let fresh = crate::oidc::refresh(
-            self.token_endpoint.as_deref(),
-            &self.issuer,
-            &self.client_id,
-            &guard.refresh,
-        )
-        .await
-        .context(crate::i18n::t(crate::i18n::Msg::ApiRefreshFailed))?;
+        let fresh = crate::oidc::refresh(&self.token_endpoint, &self.client_id, &guard.refresh)
+            .await
+            .context(crate::i18n::t(crate::i18n::Msg::ApiRefreshFailed))?;
         guard.access = fresh.access_token.clone();
         guard.refresh = fresh.refresh_token.clone();
         // Persist so the next process start reuses the rotated refresh token.
         let cfg = Config {
             server: self.server.clone(),
-            issuer: self.issuer.clone(),
             client_id: self.client_id.clone(),
             token_endpoint: self.token_endpoint.clone(),
             access_token: guard.access.clone(),
@@ -464,6 +460,21 @@ impl ApiClient {
             .await?
             .json()
             .await?)
+    }
+
+    /// Reserve an ordinary computer device before the separate Computer Service enrolls.
+    pub async fn create_computer_device(&self, name: &str) -> Result<ComputerDevice> {
+        let url = format!("{}/devices", self.base);
+        let body = serde_json::json!({ "name": name, "kind": "computer" });
+        Ok(self
+            .send(|| self.http.post(&url).json(&body))
+            .await?
+            .json()
+            .await?)
+    }
+
+    pub fn server_origin(&self) -> &str {
+        &self.server
     }
 
     pub async fn rename_chat(&self, chat_id: &str, title: &str) -> Result<()> {
