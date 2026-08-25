@@ -1,6 +1,7 @@
 [package]
 name = "pa-tui"
 version.workspace = true
+license.workspace = true
 edition.workspace = true
 description = "Personal Agent terminal UI - chat with your agent from the terminal over the same HTTP API as the web app"
 

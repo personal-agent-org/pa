@@ -1,6 +1,7 @@
 [package]
 name = "pa-oidc"
 version.workspace = true
+license.workspace = true
 edition.workspace = true
 description = "Personal Agent device-authorization-grant client - one code path for Keycloak (oidc) and the backend's local identity provider"
 
