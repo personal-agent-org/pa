@@ -3013,10 +3013,13 @@ pub async fn run(client: Arc<ApiClient>) -> Result<Option<String>> {
     result
 }
 
-async fn event_loop<B: ratatui::backend::Backend>(
-    terminal: &mut Terminal<B>,
-    client: Arc<ApiClient>,
-) -> Result<Option<String>> {
+async fn event_loop<B>(terminal: &mut Terminal<B>, client: Arc<ApiClient>) -> Result<Option<String>>
+where
+    // ratatui 0.30 made the backend error an associated type; anyhow needs it to cross the
+    // `?` in the loop below.
+    B: ratatui::backend::Backend,
+    B::Error: std::error::Error + Send + Sync + 'static,
+{
     let (tx, mut rx) = mpsc::unbounded_channel::<AppMsg>();
     let mut app = App::new(client.clone(), tx.clone());
     app.ws = Some(ws::spawn(client, tx.clone()));
