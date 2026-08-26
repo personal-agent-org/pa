@@ -7,9 +7,8 @@ on:
   workflow_dispatch:
     inputs:
       micro:
-        description: "MICRO version within this month (0, 1, 2, ...)"
-        required: true
-        default: "0"
+        description: "MICRO version within this month — leave empty to continue from the tags"
+        required: false
 
 permissions:
   contents: write
@@ -58,6 +57,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release_id: ${{ steps.rel.outputs.release_id }}
+      version: ${{ steps.ver.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -68,7 +68,20 @@ jobs:
           merge-multiple: true
       - name: Compute CalVer
         id: ver
-        run: echo "version=$(date -u +%Y).$(date -u +%-m).${{ github.event.inputs.micro }}" >> "$GITHUB_OUTPUT"
+        run: |
+          prefix="$(date -u +%Y).$(date -u +%-m)"
+          micro="${{ github.event.inputs.micro }}"
+          if [ -z "$micro" ]; then
+            git fetch --tags --force --quiet || true
+            last=-1
+            for t in $(git tag -l "v${prefix}.*"); do
+              n="${t##v${prefix}.}"
+              case "$n" in ''|*[!0-9]*) continue ;; esac
+              [ "$n" -gt "$last" ] && last="$n"
+            done
+            micro=$(( last + 1 ))
+          fi
+          echo "version=${prefix}.${micro}" >> "$GITHUB_OUTPUT"
       - name: Tag, release, upload
         id: rel
         env:
@@ -102,9 +115,11 @@ jobs:
           cd crates/pa
           for s in 32 128 256 512; do rsvg-convert -w "$s" -h "$s" app-icon.svg -o "icons/${s}x${s}.png"; done
           cp icons/256x256.png icons/128x128@2x.png && cp icons/512x512.png icons/icon.png
-      - name: Compute CalVer
+      - name: Take the version the release job resolved
         id: ver
-        run: echo "version=$(date -u +%Y).$(date -u +%-m).${{ github.event.inputs.micro }}" >> "$GITHUB_OUTPUT"
+        # NOT recomputed: this job's checkout carries no tags, so a second scan would start
+        # over at 0 and bundle the desktop artefacts onto the wrong release.
+        run: echo "version=${{ needs.release.outputs.version }}" >> "$GITHUB_OUTPUT"
       - name: Install the Tauri CLI
         uses: taiki-e/install-action@v2
         with:
