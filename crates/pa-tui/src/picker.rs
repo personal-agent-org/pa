@@ -126,3 +126,50 @@ mod tests {
         assert_eq!(f.cursor, 0);
     }
 }
+
+#[cfg(test)]
+mod skills_filter_tests {
+    use super::*;
+
+    /// The skills picker filters on name AND description, which the integrations picker does
+    /// not. Worth pinning: a skill's name is a slug ("weekly-report") and the sentence a user
+    /// actually remembers is in the description.
+    #[test]
+    fn a_filter_matches_case_insensitively() {
+        let mut f = FilterList::new();
+        f.query = "REPORT".into();
+        assert!(f.matches("weekly-report"));
+        assert!(f.matches("Writes the Monday report"));
+        assert!(!f.matches("deployment"));
+    }
+
+    #[test]
+    fn an_empty_filter_matches_everything() {
+        let f = FilterList::new();
+        assert!(f.matches("anything"));
+        assert!(f.matches(""));
+    }
+
+    #[test]
+    fn the_cursor_stays_inside_the_result_list() {
+        // The list shrinks as the user types; a cursor left pointing past the end would index
+        // a skill that is no longer shown and toggle the wrong one.
+        let mut f = FilterList::new();
+        f.down(3);
+        f.down(3);
+        assert_eq!(f.cursor, 2);
+        f.down(3);
+        assert_eq!(f.cursor, 2, "the cursor ran past the last row");
+        f.up();
+        f.up();
+        f.up();
+        assert_eq!(f.cursor, 0, "the cursor ran above the first row");
+    }
+
+    #[test]
+    fn an_empty_list_leaves_the_cursor_alone() {
+        let mut f = FilterList::new();
+        f.down(0);
+        assert_eq!(f.cursor, 0);
+    }
+}

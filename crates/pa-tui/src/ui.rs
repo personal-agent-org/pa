@@ -59,6 +59,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Popup::Attach => draw_attach_popup(f, app),
         Popup::Integrations => draw_integrations_popup(f, app),
         Popup::Memory => draw_memory_popup(f, app),
+        Popup::Skills => draw_skills_popup(f, app),
         Popup::None => {}
     }
 
@@ -1106,6 +1107,105 @@ fn draw_security_popup(f: &mut Frame, app: &App) {
     let mut state = ListState::default();
     state.select(Some(app.sel_security_row.min(SECURITY_MODES.len())));
     f.render_stateful_widget(list, area, &mut state);
+}
+
+/// The skills picker: what the agent may reach next turn, and a space bar to change it.
+fn draw_skills_popup(f: &mut Frame, app: &App) {
+    let area = centered(72, 70, f.area());
+    f.render_widget(Clear, area);
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(3),
+            Constraint::Length(1),
+        ])
+        .split(area);
+
+    let search = Paragraph::new(format!("🔍 {}▏", app.skill_pick.query)).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(t(Msg::SkillsPopupTitle))
+            .border_style(Style::default().fg(accent(app))),
+    );
+    f.render_widget(search, rows[0]);
+
+    let skills = app.skills.as_deref().unwrap_or(&[]);
+    let results = app.skill_results();
+    let items: Vec<ListItem> = if results.is_empty() {
+        let empty = if app.skills.is_none() {
+            t(Msg::SkillsLoading)
+        } else if skills.is_empty() {
+            t(Msg::SkillsEmpty)
+        } else {
+            t(Msg::SessionsNoMatch)
+        };
+        vec![ListItem::new(Span::styled(
+            empty,
+            Style::default().fg(Color::DarkGray),
+        ))]
+    } else {
+        results
+            .iter()
+            .enumerate()
+            .map(|(row, &i)| {
+                let s = &skills[i];
+                let mark = if s.enabled { "[x]" } else { "[ ]" };
+                let mut spans = vec![
+                    Span::styled(
+                        format!("{mark} "),
+                        Style::default().fg(if s.enabled {
+                            accent(app)
+                        } else {
+                            Color::DarkGray
+                        }),
+                    ),
+                    Span::styled(
+                        s.name.clone(),
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
+                ];
+                // A stale skill is one the curator is about to archive; saying so here is the
+                // only warning the user gets before it disappears from the preamble.
+                if s.lifecycle_state == "stale" {
+                    spans.push(Span::styled("  stale", Style::default().fg(Color::Yellow)));
+                }
+                if s.pinned {
+                    spans.push(Span::styled("  pin", Style::default().fg(Color::DarkGray)));
+                }
+                if s.adopted {
+                    spans.push(Span::styled("  ↗", Style::default().fg(Color::DarkGray)));
+                }
+                if !s.description.is_empty() {
+                    spans.push(Span::styled(
+                        format!("  {}", s.description),
+                        Style::default().fg(Color::DarkGray),
+                    ));
+                }
+                let style = if row == app.skill_pick.cursor {
+                    Style::default().bg(Color::DarkGray)
+                } else {
+                    Style::default()
+                };
+                ListItem::new(Line::from(spans)).style(style)
+            })
+            .collect()
+    };
+    f.render_widget(
+        List::new(items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(border_style(app, false)),
+        ),
+        rows[1],
+    );
+    f.render_widget(
+        Paragraph::new(Span::styled(
+            t(Msg::SkillsHint),
+            Style::default().fg(Color::DarkGray),
+        )),
+        rows[2],
+    );
 }
 
 fn draw_agents_popup(f: &mut Frame, app: &App) {

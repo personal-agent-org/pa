@@ -135,6 +135,7 @@ pub enum Popup {
     Security,
     Integrations,
     Memory,
+    Skills,
 }
 
 /// World-memory domains a `scoped` policy can include (mirrors the backend `ALL_DOMAINS`).
@@ -183,7 +184,7 @@ const MAX_ATTACHMENTS: usize = 6;
 
 /// Built-in client-side actions (UI ops, not prompts). Prompt-style commands are NOT
 /// hardcoded here — they come from the server as custom commands (`GET /commands`).
-const COMMANDS: [&str; 20] = [
+const COMMANDS: [&str; 21] = [
     "/btw",
     "/retry",
     "/steer",
@@ -195,6 +196,7 @@ const COMMANDS: [&str; 20] = [
     "/security",
     "/attach",
     "/agents",
+    "/skills",
     "/new",
     "/main",
     "/rename",
@@ -427,6 +429,8 @@ pub enum AppMsg {
     Suggested(String),
     Attached(Attachment),
     /// The per-chat integrations catalog + the chat's current `disabled_tools` deny-list.
+    /// The user's skills, loaded for the picker.
+    Skills(Vec<api::Skill>),
     Integrations {
         groups: Vec<api::IntegrationGroup>,
         disabled: Vec<String>,
@@ -563,6 +567,10 @@ pub struct App {
     /// is printed -- the previous chat's transcript stays above it, because a terminal cannot
     /// take back what it has shown (#126).
     /// A chat switch is waiting to be announced in the scrollback on the next commit.
+    /// The user's skills, loaded when the picker opens. `None` = not fetched yet.
+    pub skills: Option<Vec<api::Skill>>,
+    /// Filter + cursor for the skills picker (shared shape with the integrations picker).
+    pub skill_pick: crate::picker::FilterList,
     pub pending_separator: bool,
     pub committed: usize,
     /// Width the committed lines were wrapped at. A resize re-wraps the transcript, so the
@@ -640,6 +648,8 @@ impl App {
             status: t(Msg::Ready),
             scroll: 0,
             spinner: 0,
+            skills: None,
+            skill_pick: crate::picker::FilterList::new(),
             pending_separator: false,
             committed: 0,
             committed_width: 0,
@@ -1191,6 +1201,7 @@ impl App {
                 }
             }
             "/agents" => self.open_agents_popup(),
+            "/skills" => self.open_skills_popup(),
             "/integrations" | "/int" => self.open_integrations_popup(),
             "/memory" => self.open_memory_popup(),
             "/new" => self.new_chat(),
@@ -1760,6 +1771,7 @@ impl App {
                     self.status = t(Msg::AttachTooMany);
                 }
             }
+            AppMsg::Skills(items) => self.skills = Some(items),
             AppMsg::Integrations { groups, disabled } => {
                 self.integrations = groups;
                 self.disabled_tools = disabled.into_iter().collect();
@@ -2229,6 +2241,74 @@ impl App {
 
     /// Open the integrations picker (F8 / `/integrations`): clear the filter and load this
     /// chat's tool catalog + current deny-list off-thread. No-op without an open chat.
+    /// The skills picker: list what the agent may reach, and turn one on or off.
+    ///
+    /// Skills were the one server-side surface the TUI had no access to at all, while the web
+    /// app has a whole page for them (personal-agent-org/personal-agent#126). Listing and
+    /// toggling is what a terminal is good at; editing instructions is not, and stays in the
+    /// web editor.
+    fn open_skills_popup(&mut self) {
+        self.skill_pick.reset();
+        self.popup = Popup::Skills;
+        // Always refetch: the curator changes `enabled` and `lifecycle_state` behind the
+        // user's back, so a cached list would show a state that is no longer true.
+        self.skills = None;
+        let (c, tx) = (self.client.clone(), self.tx.clone());
+        tokio::spawn(async move {
+            match c.list_skills().await {
+                Ok(items) => {
+                    let _ = tx.send(AppMsg::Skills(items));
+                }
+                Err(e) => {
+                    let _ = tx.send(AppMsg::OpError(Op::Skills, format!("{e:#}")));
+                }
+            }
+        });
+    }
+
+    /// Rows matching the current filter, as indices into `skills`.
+    pub fn skill_results(&self) -> Vec<usize> {
+        let items = self.skills.as_deref().unwrap_or(&[]);
+        items
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| {
+                self.skill_pick.matches(&s.name) || self.skill_pick.matches(&s.description)
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Toggle the highlighted skill, optimistically.
+    ///
+    /// The row flips immediately and the request follows. A failure puts it back and says so --
+    /// better than a list that ignores the keypress until a round trip finishes.
+    fn toggle_selected_skill(&mut self) {
+        let results = self.skill_results();
+        let Some(&idx) = results.get(self.skill_pick.cursor) else {
+            return;
+        };
+        let Some(items) = self.skills.as_mut() else {
+            return;
+        };
+        let Some(skill) = items.get_mut(idx) else {
+            return;
+        };
+        if skill.adopted {
+            // Somebody else's skill, adopted from the marketplace: read-only here.
+            self.status = t(Msg::SkillAdoptedReadOnly);
+            return;
+        }
+        let (id, next) = (skill.id.clone(), !skill.enabled);
+        skill.enabled = next;
+        let (c, tx) = (self.client.clone(), self.tx.clone());
+        tokio::spawn(async move {
+            if let Err(e) = c.set_skill_enabled(&id, next).await {
+                let _ = tx.send(AppMsg::OpError(Op::Skills, format!("{e:#}")));
+            }
+        });
+    }
+
     fn open_integrations_popup(&mut self) {
         let Some(id) = self.current_chat.clone() else {
             self.status = t(Msg::NoChatSelected);
@@ -2721,6 +2801,26 @@ impl App {
                 KeyCode::Char(c) => {
                     self.session_query.push(c);
                     self.sel_chat = 0;
+                }
+                _ => {}
+            },
+            Popup::Skills => match code {
+                KeyCode::Esc => self.popup = Popup::None,
+                KeyCode::Up => self.skill_pick.up(),
+                KeyCode::Down => {
+                    let n = self.skill_results().len();
+                    self.skill_pick.down(n);
+                }
+                // Space, not Enter: Enter in every other picker OPENS something, and there is
+                // nothing to open here -- a skill is a text the agent reads, not a place.
+                KeyCode::Char(' ') => self.toggle_selected_skill(),
+                KeyCode::Backspace => {
+                    self.skill_pick.query.pop();
+                    self.skill_pick.cursor = 0;
+                }
+                KeyCode::Char(c) => {
+                    self.skill_pick.query.push(c);
+                    self.skill_pick.cursor = 0;
                 }
                 _ => {}
             },

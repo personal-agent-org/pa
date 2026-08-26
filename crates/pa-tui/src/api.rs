@@ -122,6 +122,29 @@ pub struct Message {
     pub parts: Vec<MsgPart>,
 }
 
+/// One of the user's skills, as the Skills view shows them.
+///
+/// A subset of `SkillOut`: the TUI lists and toggles, it does not edit instructions -- that is
+/// what the web editor is for (personal-agent-org/personal-agent#126).
+#[derive(Debug, Clone, Deserialize)]
+pub struct Skill {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub pinned: bool,
+    /// "active" | "stale" | … — the curator's aging verdict, shown as a hint.
+    #[serde(default)]
+    pub lifecycle_state: String,
+    /// True for a skill adopted from the marketplace: read-only here, and it is somebody
+    /// else's, so the list says so rather than offering to change it.
+    #[serde(default)]
+    pub adopted: bool,
+}
+
 #[derive(Deserialize, Debug, Clone)]
 pub struct Model {
     pub id: String,
@@ -502,6 +525,31 @@ impl ApiClient {
         let url = format!("{}/models", self.base);
         let resp: ModelsResponse = self.send(|| self.http.get(&url)).await?.json().await?;
         Ok(resp.models)
+    }
+
+    /// The user's skills. `GET /skills` returns them all -- no paging, no filter parameters --
+    /// so the filtering happens in the picker.
+    pub async fn list_skills(&self) -> Result<Vec<Skill>> {
+        let url = format!("{}/skills", self.base);
+        #[derive(Deserialize)]
+        struct Wrap {
+            #[serde(default)]
+            items: Vec<Skill>,
+        }
+        let resp: Wrap = self.send(|| self.http.get(&url)).await?.json().await?;
+        Ok(resp.items)
+    }
+
+    /// Turn one skill on or off.
+    ///
+    /// The only write the TUI offers on a skill: it is the one that changes what the agent can
+    /// reach in the next turn, and it is a single bit. Editing instructions belongs in the web
+    /// editor, which has room for them.
+    pub async fn set_skill_enabled(&self, skill_id: &str, enabled: bool) -> Result<()> {
+        let url = format!("{}/skills/{}", self.base, skill_id);
+        let body = serde_json::json!({ "enabled": enabled });
+        self.send(|| self.http.patch(&url).json(&body)).await?;
+        Ok(())
     }
 
     /// Open the SSE stream for a new run. Returns the live response; the caller reads the

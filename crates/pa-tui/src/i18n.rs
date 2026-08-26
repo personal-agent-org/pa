@@ -71,6 +71,7 @@ pub enum Op {
     Conversations,
     Conversation,
     Agents,
+    Skills,
     Transcript,
     Followup,
     Suggest,
@@ -146,6 +147,11 @@ pub enum Msg<'a> {
     MainChatOpened,
     AgentsPopupTitle,
     AgentsEmpty,
+    SkillsPopupTitle,
+    SkillsLoading,
+    SkillsEmpty,
+    SkillAdoptedReadOnly,
+    SkillsHint,
     TranscriptRunning,
     TranscriptLoading,
     TranscriptTitle(&'a str),
@@ -391,6 +397,20 @@ pub fn t(m: Msg) -> String {
         Msg::AgentsPopupTitle => pick(
             " Agenten & Tasks · suchen · ↑/↓ · Enter Transkript · Esc ",
             " Agents & tasks · search · ↑/↓ · Enter transcript · Esc ",
+        ),
+        Msg::SkillsPopupTitle => pick("Skills", "Skills"),
+        Msg::SkillsLoading => pick("Wird geladen …", "Loading …"),
+        Msg::SkillsEmpty => pick(
+            "Noch keine Skills — der Kurator legt sie an, wenn sich etwas wiederholt",
+            "No skills yet — the curator writes them when something repeats",
+        ),
+        Msg::SkillAdoptedReadOnly => pick(
+            "Übernommener Skill: nur im Web änderbar",
+            "Adopted skill: changeable in the web app only",
+        ),
+        Msg::SkillsHint => pick(
+            "Leertaste schaltet um · Esc schließt",
+            "Space toggles · Esc closes",
         ),
         Msg::AgentsEmpty => pick(
             "Noch keine Sub-Agenten in diesem Chat.",
@@ -1017,6 +1037,13 @@ fn op_label(op: Op) -> &'static str {
                 "Loading conversation"
             } else {
                 "Konversation laden"
+            }
+        }
+        Op::Skills => {
+            if en {
+                "Loading skills"
+            } else {
+                "Skills werden geladen"
             }
         }
         Op::Agents => {
