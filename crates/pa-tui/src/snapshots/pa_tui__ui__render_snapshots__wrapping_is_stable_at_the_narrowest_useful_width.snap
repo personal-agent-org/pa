@@ -1,0 +1,8 @@
+---
+source: crates/pa-tui/src/ui.rs
+expression: "wrap(\"die quelle der wahrheit\", 8).join(\"\\n\")"
+---
+die
+quelle
+der
+wahrheit

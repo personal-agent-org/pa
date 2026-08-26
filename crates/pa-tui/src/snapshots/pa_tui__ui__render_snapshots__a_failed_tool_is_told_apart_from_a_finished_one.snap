@@ -1,0 +1,6 @@
+---
+source: crates/pa-tui/src/ui.rs
+expression: plain(&out)
+---
+  ✗ *run_command*  false
+    error: exit status 1

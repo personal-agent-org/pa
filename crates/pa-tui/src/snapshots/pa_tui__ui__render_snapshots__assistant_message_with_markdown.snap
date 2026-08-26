@@ -1,0 +1,11 @@
+---
+source: crates/pa-tui/src/ui.rs
+expression: plain(&out)
+---
+*Agent*
+Der Stand ist *grün*.
+
+- Backend läuft
+- Frontend läuft
+
+docker ps zeigt alles.

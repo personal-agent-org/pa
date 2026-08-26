@@ -1,0 +1,11 @@
+---
+source: crates/pa-tui/src/ui.rs
+expression: plain(&out)
+---
+    Zeile 1
+    Zeile 2
+    Zeile 3
+    Zeile 4
+    Zeile 5
+    Zeile 6
+    … (+34 lines)
