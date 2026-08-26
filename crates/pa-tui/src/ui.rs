@@ -1772,3 +1772,170 @@ mod tests {
         assert_eq!(ctx_color(95), Color::Red);
     }
 }
+
+/// Snapshot tests for the render helpers (personal-agent-org/personal-agent#126).
+///
+/// Everything here turns data into `Vec<Line>`, and until now nothing compared the result to
+/// anything. A change to wrapping, to how a tool call is summarised, or to the diff colouring
+/// was invisible in review and only showed up in a terminal, if someone happened to look.
+///
+/// The helpers are snapshotted rather than the whole `draw()` on purpose: they take plain data
+/// and no `App`, so a test says what it is about instead of assembling seventy-two fields of
+/// application state to get at one line of output.
+#[cfg(test)]
+mod render_snapshots {
+    use super::*;
+    use crate::app::{UiMessage, UiTool};
+
+    /// Lines as they would reach the terminal: text plus the modifiers that carry meaning.
+    /// Colours are left out — they are a theme decision and would make every snapshot churn
+    /// the day an accent changes.
+    fn plain(lines: &[Line<'static>]) -> String {
+        lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| {
+                        let m = s.style.add_modifier;
+                        let mark = if m.contains(Modifier::BOLD) {
+                            "*"
+                        } else if m.contains(Modifier::ITALIC) {
+                            "/"
+                        } else if m.contains(Modifier::DIM) {
+                            "·"
+                        } else {
+                            ""
+                        };
+                        format!("{mark}{}{mark}", s.content)
+                    })
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn tool(name: &str, args: &str, result: Option<&str>) -> UiTool {
+        UiTool {
+            id: "t1".into(),
+            name: name.into(),
+            args: args.into(),
+            result: result.map(str::to_string),
+        }
+    }
+
+    fn msg(role: &str, text: &str) -> UiMessage {
+        UiMessage {
+            role: role.into(),
+            text: text.into(),
+            thinking: String::new(),
+            tools: Vec::new(),
+            usage: None,
+            pending: false,
+        }
+    }
+
+    #[test]
+    fn user_message() {
+        let mut out = Vec::new();
+        render_message(&mut out, &msg("user", "Wie geht es dem Deployment?"), 60, 0);
+        insta::assert_snapshot!(plain(&out));
+    }
+
+    #[test]
+    fn assistant_message_with_markdown() {
+        let mut out = Vec::new();
+        let m = msg(
+            "assistant",
+            "Der Stand ist **grün**.\n\n- Backend läuft\n- Frontend läuft\n\n`docker ps` zeigt alles.",
+        );
+        render_message(&mut out, &m, 60, 0);
+        insta::assert_snapshot!(plain(&out));
+    }
+
+    #[test]
+    fn long_words_break_rather_than_overflow() {
+        let mut out = Vec::new();
+        render_message(&mut out, &msg("user", &"a".repeat(90)), 40, 0);
+        insta::assert_snapshot!(plain(&out));
+    }
+
+    #[test]
+    fn a_running_tool_shows_the_spinner() {
+        let mut out = Vec::new();
+        render_tool(
+            &mut out,
+            &tool("web_search", r#"{"query":"ratatui"}"#, None),
+            60,
+            0,
+        );
+        insta::assert_snapshot!(plain(&out));
+    }
+
+    #[test]
+    fn a_finished_tool_shows_its_result() {
+        let mut out = Vec::new();
+        let t = tool(
+            "read_file",
+            r#"{"path":"src/main.rs"}"#,
+            Some("fn main() {}"),
+        );
+        render_tool(&mut out, &t, 60, 0);
+        insta::assert_snapshot!(plain(&out));
+    }
+
+    #[test]
+    fn a_failed_tool_is_told_apart_from_a_finished_one() {
+        // tool_looks_error() decides this from the result text alone, so it is worth pinning:
+        // a change to that heuristic silently restyles every error in the transcript.
+        let t = tool(
+            "run_command",
+            r#"{"command":"false"}"#,
+            Some("error: exit status 1"),
+        );
+        let mut out = Vec::new();
+        render_tool(&mut out, &t, 60, 0);
+        insta::assert_snapshot!(plain(&out));
+    }
+
+    #[test]
+    fn todos_render_as_a_checklist() {
+        let args = r#"{"items":[
+            {"content":"Snapshot-Tests","status":"completed"},
+            {"content":"Clipboard","status":"in_progress"},
+            {"content":"Skills","status":"pending"}]}"#;
+        let mut out = Vec::new();
+        render_todos(&mut out, args, 60);
+        insta::assert_snapshot!(plain(&out));
+    }
+
+    #[test]
+    fn a_diff_marks_added_and_removed_lines() {
+        let diff =
+            "--- a/x.rs\n+++ b/x.rs\n@@ -1,3 +1,3 @@\n fn main() {\n-    old();\n+    new();\n }";
+        let mut out = Vec::new();
+        render_diff(&mut out, diff, 60);
+        insta::assert_snapshot!(plain(&out));
+    }
+
+    #[test]
+    fn a_long_result_is_previewed_not_dumped() {
+        let mut out = Vec::new();
+        render_result_preview(
+            &mut out,
+            &(1..=40)
+                .map(|i| format!("Zeile {i}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            60,
+        );
+        insta::assert_snapshot!(plain(&out));
+    }
+
+    #[test]
+    fn wrapping_is_stable_at_the_narrowest_useful_width() {
+        // A pane can get very narrow before the layout gives up; nothing should panic or
+        // produce empty lines forever.
+        insta::assert_snapshot!(wrap("die quelle der wahrheit", 8).join("\n"));
+    }
+}

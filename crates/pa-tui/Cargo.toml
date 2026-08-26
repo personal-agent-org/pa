@@ -31,3 +31,8 @@ crossterm = { version = "0.28", features = ["event-stream"] }
 # Markdown → styled ratatui Text (assistant/user message bodies). 0.3.6 is the last
 # release built against ratatui 0.29 (0.3.7+ moved to ratatui 0.30).
 tui-markdown = "=0.3.6"
+
+[dev-dependencies]
+# Snapshot tests for the render helpers: a rendering change shows up as a reviewable diff
+# instead of being noticed in a screenshot three weeks later.
+insta = "1"

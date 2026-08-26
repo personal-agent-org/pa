@@ -1,0 +1,6 @@
+---
+source: crates/pa-tui/src/ui.rs
+expression: plain(&out)
+---
+*You*
+Wie geht es dem Deployment?
