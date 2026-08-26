@@ -12,6 +12,7 @@ use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyCode, KeyEventKind, KeyModifiers};
 use futures_util::StreamExt;
 use ratatui::backend::CrosstermBackend;
+use ratatui::text::Line;
 use ratatui::Terminal;
 use tokio::sync::mpsc::{self, UnboundedSender};
 
@@ -137,6 +138,17 @@ pub enum Popup {
 }
 
 /// World-memory domains a `scoped` policy can include (mirrors the backend `ALL_DOMAINS`).
+/// Rows the inline viewport owns at the bottom of the terminal.
+///
+/// Fixed, because `Viewport::Inline(n)` is fixed at construction and ratatui keeps the setter
+/// private. That is why full-screen views and popups still switch to the alternate screen for
+/// now; a bottom pane that grows needs a vendored Terminal, and that decision waits until the
+/// bottom-pane work actually needs it (#126).
+///
+/// Budget: up to `scrollback::LIVE_ROWS` for the turn in flight, telemetry, status, and the
+/// composer with room to grow.
+const VIEWPORT_ROWS: u16 = 12;
+
 pub const MEM_DOMAINS: [&str; 4] = ["people", "work", "places_devices", "notes_topics"];
 /// World-memory sources a `scoped` policy can include (mirrors the backend `ALL_SOURCES`).
 pub const MEM_SOURCES: [&str; 4] = ["preferences", "stated", "inferred", "observed"];
@@ -544,6 +556,19 @@ pub struct App {
     pub status: String,
     pub scroll: usize, // lines scrolled up from the bottom (0 = stuck to bottom)
     pub spinner: usize,
+    /// Transcript lines already printed into the terminal's scrollback for the OPEN chat.
+    ///
+    /// The scrollback is append-only, so this is the high-water mark of what can never be
+    /// revised. Reset when the view moves to a different chat, which is also when a separator
+    /// is printed -- the previous chat's transcript stays above it, because a terminal cannot
+    /// take back what it has shown (#126).
+    /// A chat switch is waiting to be announced in the scrollback on the next commit.
+    pub pending_separator: bool,
+    pub committed: usize,
+    /// Width the committed lines were wrapped at. A resize re-wraps the transcript, so the
+    /// mark no longer refers to the same lines and further commits have to stop rather than
+    /// duplicate what is already on screen.
+    pub committed_width: u16,
     pub should_quit: bool,
     /// Set by `/computer-service`; installation starts only after raw mode has been restored.
     pub computer_service_request: Option<String>,
@@ -615,6 +640,9 @@ impl App {
             status: t(Msg::Ready),
             scroll: 0,
             spinner: 0,
+            pending_separator: false,
+            committed: 0,
+            committed_width: 0,
             should_quit: false,
             computer_service_request: None,
         }
@@ -709,10 +737,43 @@ impl App {
         });
     }
 
+    /// An App carrying only a transcript, for tests of the pure render/commit path.
+    #[cfg(test)]
+    pub fn for_test(messages: Vec<UiMessage>) -> App {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let client = Arc::new(
+            ApiClient::new(&crate::config::Config::default()).expect("a client with no I/O"),
+        );
+        let mut app = App::new(client, tx);
+        app.messages = messages;
+        app
+    }
+
+    /// Whether this frame needs the whole terminal rather than the inline viewport.
+    ///
+    /// The chat stays inline so its transcript accumulates in the scrollback. Everything that
+    /// is a browser rather than a conversation -- the inbox, a sub-agent transcript -- and the
+    /// popups take the alternate screen, because a fixed twelve-row viewport cannot hold them
+    /// (#126).
+    pub fn wants_full_screen(&self) -> bool {
+        self.view != View::Chat || self.popup != Popup::None
+    }
+
+    /// Announce a chat switch in the scrollback and start counting its lines from zero.
+    ///
+    /// The previous chat's transcript stays above the separator. A terminal cannot un-print,
+    /// and clearing would throw away exactly the history this change exists to keep.
+    fn begin_chat_in_scrollback(&mut self) {
+        self.committed = 0;
+        self.committed_width = 0;
+        self.pending_separator = true;
+    }
+
     fn open_chat(&mut self, chat_id: String) {
         self.current_chat = Some(chat_id.clone());
         self.messages.clear();
         self.scroll = 0;
+        self.begin_chat_in_scrollback();
         self.context = None; // drop the previous chat's telemetry until this one's lands
         self.mem_access = None; // and the previous chat's memory policy (reloaded on picker open)
         self.status = t(Msg::LoadingHistory);
@@ -2978,9 +3039,7 @@ fn convert_message(m: api::Message) -> UiMessage {
 /// Set up the terminal, run the event loop, and restore the terminal on exit.
 pub async fn run(client: Arc<ApiClient>) -> Result<Option<String>> {
     use crossterm::execute;
-    use crossterm::terminal::{
-        disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
-    };
+    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 
     use crossterm::event::{
         KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
@@ -2988,7 +3047,6 @@ pub async fn run(client: Arc<ApiClient>) -> Result<Option<String>> {
 
     enable_raw_mode()?;
     let mut stdout = std::io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
     // Disambiguate escape codes so Ctrl+M is reported distinctly from Enter (Ctrl+M jumps
     // to the main chat). We push unconditionally rather than gating on
     // `supports_keyboard_enhancement()` — that probe false-negatives on several terminals
@@ -3000,7 +3058,16 @@ pub async fn run(client: Arc<ApiClient>) -> Result<Option<String>> {
     )
     .is_ok();
     let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    // INLINE, not the alternate screen: the transcript is written into the terminal's own
+    // scrollback, so selecting, copying, scrolling and searching stay the terminal's job and
+    // the conversation is still there after quitting (#126). Only the composer, the telemetry
+    // strip, the status line and the in-flight turn live in the viewport.
+    let mut terminal = Terminal::with_options(
+        backend,
+        ratatui::TerminalOptions {
+            viewport: ratatui::Viewport::Inline(VIEWPORT_ROWS),
+        },
+    )?;
 
     let result = event_loop(&mut terminal, client).await;
 
@@ -3008,16 +3075,73 @@ pub async fn run(client: Arc<ApiClient>) -> Result<Option<String>> {
         let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
     }
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    // Leave the viewport behind cleanly: the transcript above it stays, which is the point.
+    terminal.clear()?;
     terminal.show_cursor()?;
+    println!();
     result
+}
+
+/// Print the transcript lines that are finished into the terminal's scrollback.
+///
+/// Called before each draw. Everything it hands to `insert_before` is final -- there is no
+/// going back over a line once the terminal has it -- so it prints only what
+/// `scrollback::split` says is settled, and stops entirely when a resize has re-wrapped the
+/// transcript underneath the high-water mark.
+fn commit_transcript<B>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()>
+where
+    B: ratatui::backend::Backend,
+    B::Error: std::error::Error + Send + Sync + 'static,
+{
+    let width = terminal.size()?.width;
+    if width == 0 {
+        return Ok(());
+    }
+    if app.committed_width != width {
+        // Re-wrapped: the mark counts lines that no longer exist in that form. Everything
+        // already printed stays printed -- start counting again from the current transcript so
+        // nothing is duplicated, and accept that the re-wrap is only visible from here on.
+        let (_, finished) = ui::transcript_lines(app, width as usize);
+        app.committed = finished;
+        app.committed_width = width;
+        return Ok(());
+    }
+
+    if app.pending_separator {
+        let title = app
+            .current_chat
+            .as_ref()
+            .and_then(|id| app.chats.iter().find(|c| &c.id == id))
+            .map(|c| c.title.clone())
+            .unwrap_or_default();
+        let rule = crate::scrollback::chat_separator(&title, width as usize);
+        let height = u16::try_from(rule.len()).unwrap_or(3);
+        terminal.insert_before(height, |buf| {
+            ratatui::widgets::Widget::render(ratatui::widgets::Paragraph::new(rule), buf.area, buf);
+        })?;
+        app.pending_separator = false;
+    }
+
+    let (lines, finished) = ui::transcript_lines(app, width as usize);
+    let emission = crate::scrollback::split(lines.len(), finished, app.committed);
+    if emission.commit.is_empty() {
+        return Ok(());
+    }
+    let chunk: Vec<Line<'static>> = emission.commit.iter().map(|i| lines[*i].clone()).collect();
+    let height = u16::try_from(chunk.len()).unwrap_or(u16::MAX);
+    terminal.insert_before(height, |buf| {
+        ratatui::widgets::Widget::render(ratatui::widgets::Paragraph::new(chunk), buf.area, buf);
+    })?;
+    app.committed += emission.commit.len();
+    Ok(())
 }
 
 async fn event_loop<B>(terminal: &mut Terminal<B>, client: Arc<ApiClient>) -> Result<Option<String>>
 where
     // ratatui 0.30 made the backend error an associated type; anyhow needs it to cross the
-    // `?` in the loop below.
-    B: ratatui::backend::Backend,
+    // `?` in the loop below. Write is for the alternate-screen switch, which goes to the
+    // backend directly rather than through ratatui.
+    B: ratatui::backend::Backend + std::io::Write,
     B::Error: std::error::Error + Send + Sync + 'static,
 {
     let (tx, mut rx) = mpsc::unbounded_channel::<AppMsg>();
@@ -3028,7 +3152,26 @@ where
     let mut reader = EventStream::new();
     let mut tick = tokio::time::interval(Duration::from_millis(120));
 
+    // Whether the alternate screen is currently up. Full-screen views and popups take the
+    // whole terminal; the chat does not.
+    let mut alt = false;
+
     loop {
+        let wants_alt = app.wants_full_screen();
+        if wants_alt != alt {
+            use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
+            if wants_alt {
+                crossterm::execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+            } else {
+                crossterm::execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+            }
+            terminal.clear()?;
+            alt = wants_alt;
+        }
+
+        if !alt {
+            commit_transcript(terminal, &mut app)?;
+        }
         terminal.draw(|f| ui::draw(f, &app))?;
         if app.should_quit {
             break;

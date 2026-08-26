@@ -12,6 +12,7 @@ mod config;
 mod i18n;
 mod oidc;
 mod picker;
+mod scrollback;
 mod sse;
 mod terminal;
 mod ui;
