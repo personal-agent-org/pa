@@ -111,8 +111,18 @@ pub struct MsgPart {
 
 #[derive(Deserialize, Debug, Default, Clone)]
 pub struct Message {
+    /// Server message id. Fork and rewind address a point in the conversation by it, so
+    /// without it those actions cannot exist at all (personal-agent-org/personal-agent#126).
+    #[serde(default)]
+    pub id: String,
     #[serde(default)]
     pub position: i64,
+    /// The run this assistant turn came from, and whether it can still be taken back. A revert
+    /// undoes the run's side effects, so the server decides -- the client only asks.
+    #[serde(default)]
+    pub run_id: Option<String>,
+    #[serde(default)]
+    pub revertable: bool,
     pub role: String,
     #[serde(default)]
     pub display_text: Option<String>,
@@ -549,6 +559,48 @@ impl ApiClient {
         let url = format!("{}/skills/{}", self.base, skill_id);
         let body = serde_json::json!({ "enabled": enabled });
         self.send(|| self.http.patch(&url).json(&body)).await?;
+        Ok(())
+    }
+
+    /// Start a new chat from the conversation up to `message_id`. Returns the new chat's id.
+    pub async fn fork_chat(&self, chat_id: &str, message_id: &str) -> Result<String> {
+        let url = format!("{}/chats/{}/fork", self.base, chat_id);
+        let body = serde_json::json!({ "message_id": message_id });
+        #[derive(Deserialize)]
+        struct Forked {
+            id: String,
+        }
+        let out: Forked = self
+            .send(|| self.http.post(&url).json(&body))
+            .await?
+            .json()
+            .await?;
+        Ok(out.id)
+    }
+
+    /// Drop everything after `message_id` in this chat. Destructive and not undoable, which is
+    /// why the caller confirms first.
+    pub async fn rewind_to(&self, chat_id: &str, message_id: &str) -> Result<bool> {
+        let url = format!("{}/chats/{}/rewind", self.base, chat_id);
+        let body = serde_json::json!({ "message_id": message_id });
+        #[derive(Deserialize, Default)]
+        struct Rewound {
+            #[serde(default)]
+            workspace_restored: bool,
+        }
+        let out: Rewound = self
+            .send(|| self.http.post(&url).json(&body))
+            .await?
+            .json()
+            .await
+            .unwrap_or_default();
+        Ok(out.workspace_restored)
+    }
+
+    /// Undo a run's side effects. Only offered for runs the server marked `revertable`.
+    pub async fn revert_run(&self, chat_id: &str, run_id: &str) -> Result<()> {
+        let url = format!("{}/chats/{}/runs/{}/revert", self.base, chat_id, run_id);
+        self.send(|| self.http.post(&url)).await?;
         Ok(())
     }
 

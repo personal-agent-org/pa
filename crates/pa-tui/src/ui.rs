@@ -60,6 +60,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Popup::Integrations => draw_integrations_popup(f, app),
         Popup::Memory => draw_memory_popup(f, app),
         Popup::Skills => draw_skills_popup(f, app),
+        Popup::Messages => draw_message_picker(f, app),
         Popup::None => {}
     }
 
@@ -1109,6 +1110,88 @@ fn draw_security_popup(f: &mut Frame, app: &App) {
     f.render_stateful_widget(list, area, &mut state);
 }
 
+/// Pick the turn a fork or rewind addresses.
+///
+/// Only the user's own earlier turns are offered — see `App::message_targets`. The title says
+/// which of the two is about to happen, because rewind is not undoable and the two rows look
+/// identical otherwise.
+fn draw_message_picker(f: &mut Frame, app: &App) {
+    let area = centered(76, 70, f.area());
+    f.render_widget(Clear, area);
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(3),
+            Constraint::Length(1),
+        ])
+        .split(area);
+
+    let title = match app.msg_action {
+        crate::app::MsgAction::Fork => t(Msg::ForkPickTitle),
+        crate::app::MsgAction::Rewind => t(Msg::RewindPickTitle),
+    };
+    // Rewind discards; the border says so before the user commits to a row.
+    let tone = match app.msg_action {
+        crate::app::MsgAction::Fork => accent(app),
+        crate::app::MsgAction::Rewind => Color::Yellow,
+    };
+    f.render_widget(
+        Paragraph::new(format!("🔍 {}▏", app.msg_pick.query)).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .border_style(Style::default().fg(tone)),
+        ),
+        rows[0],
+    );
+
+    let targets = app.message_targets();
+    let items: Vec<ListItem> = if targets.is_empty() {
+        vec![ListItem::new(Span::styled(
+            t(Msg::SessionsNoMatch),
+            Style::default().fg(Color::DarkGray),
+        ))]
+    } else {
+        targets
+            .iter()
+            .enumerate()
+            .map(|(row, &i)| {
+                let m = &app.messages[i];
+                let one_line = m.text.split('\n').next().unwrap_or("").trim();
+                let style = if row == app.msg_pick.cursor {
+                    Style::default().bg(Color::DarkGray)
+                } else {
+                    Style::default()
+                };
+                ListItem::new(Line::from(vec![
+                    Span::styled(
+                        format!("{:>3}  ", i + 1),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                    Span::raw(one_line.chars().take(100).collect::<String>()),
+                ]))
+                .style(style)
+            })
+            .collect()
+    };
+    f.render_widget(
+        List::new(items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(border_style(app, false)),
+        ),
+        rows[1],
+    );
+    f.render_widget(
+        Paragraph::new(Span::styled(
+            t(Msg::MessagePickHint),
+            Style::default().fg(Color::DarkGray),
+        )),
+        rows[2],
+    );
+}
+
 /// The skills picker: what the agent may reach next turn, and a space bar to change it.
 fn draw_skills_popup(f: &mut Frame, app: &App) {
     let area = centered(72, 70, f.area());
@@ -1910,12 +1993,92 @@ mod tests {
 /// and no `App`, so a test says what it is about instead of assembling seventy-two fields of
 /// application state to get at one line of output.
 #[cfg(test)]
+mod message_target_tests {
+    use crate::app::{App, MsgAction, UiMessage};
+
+    fn msg(id: &str, role: &str, text: &str) -> UiMessage {
+        UiMessage {
+            id: id.into(),
+            run_id: None,
+            revertable: false,
+            role: role.into(),
+            text: text.into(),
+            thinking: String::new(),
+            tools: Vec::new(),
+            usage: None,
+            pending: false,
+        }
+    }
+
+    fn app(msgs: Vec<UiMessage>) -> App {
+        App::for_test(msgs)
+    }
+
+    #[test]
+    fn only_the_users_own_turns_are_offered() {
+        // Fork and rewind address a point the user wrote. Offering an assistant turn would ask
+        // the server to cut the conversation in a place it does not accept.
+        let a = app(vec![
+            msg("1", "user", "erste"),
+            msg("2", "assistant", "antwort"),
+            msg("3", "user", "zweite"),
+            msg("4", "assistant", "antwort"),
+        ]);
+        assert_eq!(a.message_targets(), vec![0, 2]);
+    }
+
+    #[test]
+    fn the_newest_turn_is_never_a_target() {
+        // Rewinding to the last message removes nothing and forking there copies the whole
+        // chat -- both are a no-op dressed up as an action. Same rule as the web app's
+        // canRewind.
+        let a = app(vec![msg("1", "user", "einzige")]);
+        assert!(a.message_targets().is_empty());
+
+        let a = app(vec![msg("1", "user", "erste"), msg("2", "user", "letzte")]);
+        assert_eq!(a.message_targets(), vec![0]);
+    }
+
+    #[test]
+    fn a_turn_the_server_has_not_seen_is_not_a_target() {
+        // A locally-created pending turn has no server id; sending an empty one would be a
+        // request the backend cannot resolve.
+        let a = app(vec![
+            msg("", "user", "noch nicht gesendet"),
+            msg("2", "user", "danach"),
+            msg("3", "assistant", "antwort"),
+        ]);
+        assert_eq!(a.message_targets(), vec![1]);
+    }
+
+    #[test]
+    fn the_filter_narrows_the_targets() {
+        let mut a = app(vec![
+            msg("1", "user", "Deployment prüfen"),
+            msg("2", "user", "Tests laufen lassen"),
+            msg("3", "assistant", "ok"),
+        ]);
+        a.msg_pick.query = "deploy".into();
+        assert_eq!(a.message_targets(), vec![0]);
+    }
+
+    #[test]
+    fn fork_and_rewind_are_distinct_actions() {
+        // They differ only in consequence, so nothing in the code should treat them as one.
+        assert_ne!(MsgAction::Fork, MsgAction::Rewind);
+    }
+}
+
+#[cfg(test)]
 mod transcript_tests {
     use super::*;
     use crate::app::{App, UiMessage};
 
     fn settled(text: &str) -> UiMessage {
         UiMessage {
+            id: String::new(),
+            run_id: None,
+            revertable: false,
             role: "assistant".into(),
             text: text.into(),
             thinking: String::new(),
@@ -2020,6 +2183,9 @@ mod render_snapshots {
 
     fn msg(role: &str, text: &str) -> UiMessage {
         UiMessage {
+            id: String::new(),
+            run_id: None,
+            revertable: false,
             role: role.into(),
             text: text.into(),
             thinking: String::new(),

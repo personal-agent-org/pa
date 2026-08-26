@@ -72,6 +72,9 @@ pub enum Op {
     Conversation,
     Agents,
     Skills,
+    Fork,
+    Rewind,
+    Revert,
     Transcript,
     Followup,
     Suggest,
@@ -152,6 +155,14 @@ pub enum Msg<'a> {
     SkillsEmpty,
     SkillAdoptedReadOnly,
     SkillsHint,
+    BusyRunning,
+    NoRewindTarget,
+    NoRevertTarget,
+    Rewound,
+    RewoundWithWorkspace,
+    ForkPickTitle,
+    RewindPickTitle,
+    MessagePickHint,
     TranscriptRunning,
     TranscriptLoading,
     TranscriptTitle(&'a str),
@@ -407,6 +418,35 @@ pub fn t(m: Msg) -> String {
         Msg::SkillAdoptedReadOnly => pick(
             "Übernommener Skill: nur im Web änderbar",
             "Adopted skill: changeable in the web app only",
+        ),
+        Msg::BusyRunning => pick(
+            "Läuft gerade — erst abwarten oder abbrechen",
+            "A turn is running — wait or cancel first",
+        ),
+        Msg::NoRewindTarget => pick(
+            "Keine frühere eigene Nachricht in diesem Chat",
+            "No earlier message of yours in this chat",
+        ),
+        Msg::NoRevertTarget => pick(
+            "Kein zurücknehmbarer Lauf",
+            "No run that can be taken back",
+        ),
+        Msg::Rewound => pick("Zurückgespult", "Rewound"),
+        Msg::RewoundWithWorkspace => pick(
+            "Zurückgespult — auch der Workspace",
+            "Rewound — the workspace too",
+        ),
+        Msg::ForkPickTitle => pick(
+            "Abzweigen ab welcher Nachricht?",
+            "Fork from which message?",
+        ),
+        Msg::RewindPickTitle => pick(
+            "Zurückspulen bis wohin? (verwirft alles danach)",
+            "Rewind to where? (discards everything after)",
+        ),
+        Msg::MessagePickHint => pick(
+            "Enter wählt · Esc bricht ab",
+            "Enter picks · Esc cancels",
         ),
         Msg::SkillsHint => pick(
             "Leertaste schaltet um · Esc schließt",
@@ -1037,6 +1077,27 @@ fn op_label(op: Op) -> &'static str {
                 "Loading conversation"
             } else {
                 "Konversation laden"
+            }
+        }
+        Op::Fork => {
+            if en {
+                "Forking the chat"
+            } else {
+                "Chat wird abgezweigt"
+            }
+        }
+        Op::Rewind => {
+            if en {
+                "Rewinding"
+            } else {
+                "Wird zurückgespult"
+            }
+        }
+        Op::Revert => {
+            if en {
+                "Reverting the run"
+            } else {
+                "Lauf wird zurückgenommen"
             }
         }
         Op::Skills => {
