@@ -59,7 +59,9 @@ pub fn chat_separator(title: &str, width: usize) -> Vec<Line<'static>> {
     } else {
         format!(" {} ", title.trim())
     };
-    let rule = width.saturating_sub(label.chars().count() + 2).max(2);
+    // The rule fills whatever the label leaves; label + rule is exactly `width`. A title
+    // longer than the terminal leaves nothing, which is fine -- it must not underflow.
+    let rule = width.saturating_sub(label.chars().count());
     let left = rule / 2;
     let right = rule - left;
     vec![

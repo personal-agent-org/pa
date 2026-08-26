@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Default, Serialize, Deserialize, Clone)]
 pub struct Config {
     /// Personal Agent base URL, e.g. https://pa.example.com (no trailing /api/v1).
     pub server: String,

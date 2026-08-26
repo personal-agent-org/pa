@@ -224,6 +224,33 @@ fn draw_sessions_popup(f: &mut Frame, app: &App) {
     f.render_stateful_widget(list, rows[1], &mut state);
 }
 
+/// The transcript as lines, plus how many of them are FINISHED.
+///
+/// Finished means the line can be printed into the terminal's scrollback and never touched
+/// again. Every line of a settled turn qualifies; of a turn that is still streaming, every line
+/// except the last, which is still growing (personal-agent-org/personal-agent#126).
+///
+/// Shared with the alternate-screen views, which render the same transcript and simply ignore
+/// the second number.
+pub fn transcript_lines(app: &App, width: usize) -> (Vec<Line<'static>>, usize) {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut finished = 0usize;
+    for m in &app.messages {
+        let before = lines.len();
+        render_message(&mut lines, m, width, app.spinner);
+        lines.push(Line::from(""));
+        if m.pending {
+            // The blank separator was pushed after a line that may still grow, so neither it
+            // nor that line is finished yet.
+            finished = lines.len().saturating_sub(2).max(before);
+        } else {
+            finished = lines.len();
+        }
+    }
+    let finished = finished.min(lines.len());
+    (lines, finished)
+}
+
 fn draw_messages(f: &mut Frame, app: &App, area: Rect) {
     let inner_w = area.width.saturating_sub(2).max(1) as usize;
 
@@ -1782,6 +1809,73 @@ mod tests {
 /// The helpers are snapshotted rather than the whole `draw()` on purpose: they take plain data
 /// and no `App`, so a test says what it is about instead of assembling seventy-two fields of
 /// application state to get at one line of output.
+#[cfg(test)]
+mod transcript_tests {
+    use super::*;
+    use crate::app::{App, UiMessage};
+
+    fn settled(text: &str) -> UiMessage {
+        UiMessage {
+            role: "assistant".into(),
+            text: text.into(),
+            thinking: String::new(),
+            tools: Vec::new(),
+            usage: None,
+            pending: false,
+        }
+    }
+
+    fn streaming(text: &str) -> UiMessage {
+        UiMessage {
+            pending: true,
+            ..settled(text)
+        }
+    }
+
+    fn with(messages: Vec<UiMessage>) -> App {
+        App::for_test(messages)
+    }
+
+    #[test]
+    fn a_settled_transcript_is_finished_to_the_end() {
+        let (lines, finished) = transcript_lines(&with(vec![settled("eins"), settled("zwei")]), 40);
+        assert_eq!(finished, lines.len());
+    }
+
+    #[test]
+    fn a_streaming_turn_holds_back_its_last_line() {
+        // The rule the whole scrollback model rests on: what is printed can never be revised,
+        // so the line still growing must not be printed.
+        let (lines, finished) = transcript_lines(&with(vec![settled("alt"), streaming("neu")]), 40);
+        assert!(
+            finished < lines.len(),
+            "a growing turn was reported as finished"
+        );
+        // Everything from the settled turn is still finished.
+        assert!(finished >= 2);
+    }
+
+    #[test]
+    fn an_empty_transcript_finishes_nothing() {
+        let (lines, finished) = transcript_lines(&with(Vec::new()), 40);
+        assert!(lines.is_empty());
+        assert_eq!(finished, 0);
+    }
+
+    #[test]
+    fn finished_never_exceeds_the_lines_produced() {
+        // commit_transcript indexes with this number; overshooting it would panic.
+        for msgs in [
+            vec![streaming("")],
+            vec![settled("")],
+            vec![streaming("a\nb\nc")],
+        ] {
+            let (lines, finished) = transcript_lines(&with(msgs), 40);
+            assert!(finished <= lines.len());
+        }
+    }
+}
+
 #[cfg(test)]
 mod render_snapshots {
     use super::*;
