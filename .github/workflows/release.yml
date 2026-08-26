@@ -1,13 +1,13 @@
 name: Release
 
-# CalVer (YYYY.M.MICRO), run manually. Builds the terminal `pa` chat client for every platform,
+# CalVer (YEAR.MONTH.MINOR), run manually. Builds the terminal `pa` chat client for every platform,
 # tags, and uploads the per-platform binaries. The `desktop-linux` job then builds the
 # gui-enabled bundle (.deb + AppImage) via the Tauri bundler and attaches it to the release.
 on:
   workflow_dispatch:
     inputs:
-      micro:
-        description: "MICRO version within this month — leave empty to continue from the tags"
+      minor:
+        description: "MINOR version within this month — leave empty to continue from the tags"
         required: false
 
 permissions:
@@ -70,8 +70,8 @@ jobs:
         id: ver
         run: |
           prefix="$(date -u +%Y).$(date -u +%-m)"
-          micro="${{ github.event.inputs.micro }}"
-          if [ -z "$micro" ]; then
+          minor="${{ github.event.inputs.minor }}"
+          if [ -z "$minor" ]; then
             git fetch --tags --force --quiet || true
             last=-1
             for t in $(git tag -l "v${prefix}.*"); do
@@ -79,9 +79,10 @@ jobs:
               case "$n" in ''|*[!0-9]*) continue ;; esac
               [ "$n" -gt "$last" ] && last="$n"
             done
-            micro=$(( last + 1 ))
+            minor=$(( last + 1 ))
           fi
-          echo "version=${prefix}.${micro}" >> "$GITHUB_OUTPUT"
+          case "$minor" in ''|*[!0-9]*) echo "MINOR must be numeric" >&2; exit 1 ;; esac
+          echo "version=${prefix}.${minor}" >> "$GITHUB_OUTPUT"
       - name: Tag, release, upload
         id: rel
         env:
