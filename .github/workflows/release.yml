@@ -74,8 +74,8 @@ jobs:
           if [ -z "$minor" ]; then
             git fetch --tags --force --quiet || true
             last=-1
-            for t in $(git tag -l "v${prefix}.*"); do
-              n="${t##v${prefix}.}"
+            for t in $(git tag -l "${prefix}.*"); do
+              n="${t##${prefix}.}"
               case "$n" in ''|*[!0-9]*) continue ;; esac
               [ "$n" -gt "$last" ] && last="$n"
             done
@@ -88,7 +88,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          v="v${{ steps.ver.outputs.version }}"
+          v="${{ steps.ver.outputs.version }}"
           git rev-parse "$v" >/dev/null 2>&1 || { git tag "$v" && git push origin "$v"; }
           gh release view "$v" >/dev/null 2>&1 || gh release create "$v" --title "$v" --generate-notes
           gh release upload "$v" --clobber \
@@ -144,7 +144,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          v="v${{ steps.ver.outputs.version }}"
+          v="${{ steps.ver.outputs.version }}"
           appimage=$(find target -type f -name "*.AppImage" | head -1)
           deb=$(find target -type f -name "*.deb" | head -1)
           # Upload each bundle independently so a missing one never blocks the other.
