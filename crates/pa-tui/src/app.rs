@@ -136,6 +136,7 @@ pub enum Popup {
     Integrations,
     Memory,
     Skills,
+    Messages,
 }
 
 /// World-memory domains a `scoped` policy can include (mirrors the backend `ALL_DOMAINS`).
@@ -184,7 +185,7 @@ const MAX_ATTACHMENTS: usize = 6;
 
 /// Built-in client-side actions (UI ops, not prompts). Prompt-style commands are NOT
 /// hardcoded here — they come from the server as custom commands (`GET /commands`).
-const COMMANDS: [&str; 21] = [
+const COMMANDS: [&str; 24] = [
     "/btw",
     "/retry",
     "/steer",
@@ -197,6 +198,9 @@ const COMMANDS: [&str; 21] = [
     "/attach",
     "/agents",
     "/skills",
+    "/fork",
+    "/rewind",
+    "/revert",
     "/new",
     "/main",
     "/rename",
@@ -375,7 +379,25 @@ pub struct UiTool {
     pub result: Option<String>,
 }
 
+/// What the message picker will do with the row the user chooses.
+///
+/// Both address a point in the conversation; the difference is what happens to everything
+/// after it. Fork copies the history into a NEW chat and leaves this one untouched; rewind
+/// throws it away here and cannot be undone. Separate commands rather than one picker with a
+/// mode toggle, because the two have very different consequences for a mis-press.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MsgAction {
+    Fork,
+    Rewind,
+}
+
 pub struct UiMessage {
+    /// Server message id, empty for a turn that only exists locally so far. Fork and rewind
+    /// address a point in the conversation by it (#126).
+    pub id: String,
+    /// The run behind an assistant turn, and whether the server says it can still be undone.
+    pub run_id: Option<String>,
+    pub revertable: bool,
     pub role: String,
     pub text: String,
     pub thinking: String,
@@ -387,6 +409,9 @@ pub struct UiMessage {
 impl UiMessage {
     fn assistant_pending() -> UiMessage {
         UiMessage {
+            id: String::new(),
+            run_id: None,
+            revertable: false,
             role: "assistant".into(),
             text: String::new(),
             thinking: String::new(),
@@ -431,6 +456,13 @@ pub enum AppMsg {
     /// The per-chat integrations catalog + the chat's current `disabled_tools` deny-list.
     /// The user's skills, loaded for the picker.
     Skills(Vec<api::Skill>),
+    /// A fork produced a new chat; open it.
+    Forked(String),
+    /// History changed under us (rewind or revert): reload it.
+    Rewound {
+        chat_id: String,
+        restored: bool,
+    },
     Integrations {
         groups: Vec<api::IntegrationGroup>,
         disabled: Vec<String>,
@@ -567,6 +599,10 @@ pub struct App {
     /// is printed -- the previous chat's transcript stays above it, because a terminal cannot
     /// take back what it has shown (#126).
     /// A chat switch is waiting to be announced in the scrollback on the next commit.
+    /// Which action the message picker was opened for.
+    pub msg_action: MsgAction,
+    /// Filter + cursor for the message picker.
+    pub msg_pick: crate::picker::FilterList,
     /// The user's skills, loaded when the picker opens. `None` = not fetched yet.
     pub skills: Option<Vec<api::Skill>>,
     /// Filter + cursor for the skills picker (shared shape with the integrations picker).
@@ -648,6 +684,8 @@ impl App {
             status: t(Msg::Ready),
             scroll: 0,
             spinner: 0,
+            msg_action: MsgAction::Rewind,
+            msg_pick: crate::picker::FilterList::new(),
             skills: None,
             skill_pick: crate::picker::FilterList::new(),
             pending_separator: false,
@@ -870,6 +908,9 @@ impl App {
         }
 
         self.messages.push(UiMessage {
+            id: String::new(),
+            run_id: None,
+            revertable: false,
             role: "user".into(),
             text: display,
             thinking: String::new(),
@@ -946,6 +987,9 @@ impl App {
             return;
         }
         self.messages.push(UiMessage {
+            id: String::new(),
+            run_id: None,
+            revertable: false,
             role: "shell".into(),
             text: format!("$ {cmd}"),
             thinking: String::new(),
@@ -1005,6 +1049,9 @@ impl App {
         }
         // Show the steer inline (below the in-progress answer it corrects).
         self.messages.push(UiMessage {
+            id: String::new(),
+            run_id: None,
+            revertable: false,
             role: "steer".into(),
             text,
             thinking: String::new(),
@@ -1044,6 +1091,9 @@ impl App {
             return;
         };
         self.messages.push(UiMessage {
+            id: String::new(),
+            run_id: None,
+            revertable: false,
             role: "user".into(),
             text: format!("/btw {prompt}"),
             thinking: String::new(),
@@ -1202,6 +1252,9 @@ impl App {
             }
             "/agents" => self.open_agents_popup(),
             "/skills" => self.open_skills_popup(),
+            "/fork" => self.open_message_picker(MsgAction::Fork),
+            "/rewind" => self.open_message_picker(MsgAction::Rewind),
+            "/revert" => self.revert_last_run(),
             "/integrations" | "/int" => self.open_integrations_popup(),
             "/memory" => self.open_memory_popup(),
             "/new" => self.new_chat(),
@@ -1772,6 +1825,21 @@ impl App {
                 }
             }
             AppMsg::Skills(items) => self.skills = Some(items),
+            AppMsg::Forked(new_id) => {
+                self.spawn_chats();
+                self.open_chat(new_id);
+            }
+            AppMsg::Rewound { chat_id, restored } => {
+                self.status = t(if restored {
+                    Msg::RewoundWithWorkspace
+                } else {
+                    Msg::Rewound
+                });
+                // The transcript on screen is now wrong in a way nothing local can fix, and
+                // the scrollback above cannot be taken back -- so reload and start a fresh
+                // block below a separator, exactly like a chat switch.
+                self.open_chat(chat_id);
+            }
             AppMsg::Integrations { groups, disabled } => {
                 self.integrations = groups;
                 self.disabled_tools = disabled.into_iter().collect();
@@ -2241,6 +2309,111 @@ impl App {
 
     /// Open the integrations picker (F8 / `/integrations`): clear the filter and load this
     /// chat's tool catalog + current deny-list off-thread. No-op without an open chat.
+    /// Points in the conversation a fork or rewind can address.
+    ///
+    /// The user's own turns, and never the last one: the web app's rule (`canRewind`), and it
+    /// is the right one — rewinding to the newest message would remove nothing, and forking
+    /// there just copies the whole chat.
+    pub fn message_targets(&self) -> Vec<usize> {
+        let last = self.messages.len().saturating_sub(1);
+        self.messages
+            .iter()
+            .enumerate()
+            .filter(|(i, m)| {
+                !m.id.is_empty() && m.role == "user" && *i < last && self.msg_pick.matches(&m.text)
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    fn open_message_picker(&mut self, action: MsgAction) {
+        if self.current_chat.is_none() {
+            self.status = t(Msg::NoChatSelected);
+            return;
+        }
+        if self.streaming {
+            // Both rewrite history; doing that under a running turn would race the stream.
+            self.status = t(Msg::BusyRunning);
+            return;
+        }
+        self.msg_pick.reset();
+        self.msg_action = action;
+        if self.message_targets().is_empty() {
+            self.status = t(Msg::NoRewindTarget);
+            return;
+        }
+        self.popup = Popup::Messages;
+    }
+
+    /// Run the picked action on the highlighted turn.
+    fn apply_message_action(&mut self) {
+        let targets = self.message_targets();
+        let Some(&idx) = targets.get(self.msg_pick.cursor) else {
+            return;
+        };
+        let (Some(chat_id), Some(m)) = (self.current_chat.clone(), self.messages.get(idx)) else {
+            return;
+        };
+        let (message_id, action) = (m.id.clone(), self.msg_action);
+        self.popup = Popup::None;
+        let (c, tx) = (self.client.clone(), self.tx.clone());
+        tokio::spawn(async move {
+            match action {
+                MsgAction::Fork => match c.fork_chat(&chat_id, &message_id).await {
+                    Ok(new_id) => {
+                        let _ = tx.send(AppMsg::Forked(new_id));
+                    }
+                    Err(e) => {
+                        let _ = tx.send(AppMsg::OpError(Op::Fork, format!("{e:#}")));
+                    }
+                },
+                MsgAction::Rewind => match c.rewind_to(&chat_id, &message_id).await {
+                    Ok(restored) => {
+                        let _ = tx.send(AppMsg::Rewound { chat_id, restored });
+                    }
+                    Err(e) => {
+                        let _ = tx.send(AppMsg::OpError(Op::Rewind, format!("{e:#}")));
+                    }
+                },
+            }
+        });
+    }
+
+    /// Undo the newest assistant turn the server marked revertable.
+    ///
+    /// No picker: a revert undoes side effects, and offering to undo an OLD run while newer
+    /// ones stand on top of it would be a promise the server cannot keep.
+    fn revert_last_run(&mut self) {
+        let Some(chat_id) = self.current_chat.clone() else {
+            self.status = t(Msg::NoChatSelected);
+            return;
+        };
+        let run = self
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.revertable && m.run_id.is_some())
+            .and_then(|m| m.run_id.clone());
+        let Some(run_id) = run else {
+            self.status = t(Msg::NoRevertTarget);
+            return;
+        };
+        let (c, tx) = (self.client.clone(), self.tx.clone());
+        tokio::spawn(async move {
+            match c.revert_run(&chat_id, &run_id).await {
+                Ok(()) => {
+                    let _ = tx.send(AppMsg::Rewound {
+                        chat_id,
+                        restored: true,
+                    });
+                }
+                Err(e) => {
+                    let _ = tx.send(AppMsg::OpError(Op::Revert, format!("{e:#}")));
+                }
+            }
+        });
+    }
+
     /// The skills picker: list what the agent may reach, and turn one on or off.
     ///
     /// Skills were the one server-side surface the TUI had no access to at all, while the web
@@ -2804,6 +2977,24 @@ impl App {
                 }
                 _ => {}
             },
+            Popup::Messages => match code {
+                KeyCode::Esc => self.popup = Popup::None,
+                KeyCode::Up => self.msg_pick.up(),
+                KeyCode::Down => {
+                    let n = self.message_targets().len();
+                    self.msg_pick.down(n);
+                }
+                KeyCode::Enter => self.apply_message_action(),
+                KeyCode::Backspace => {
+                    self.msg_pick.query.pop();
+                    self.msg_pick.cursor = 0;
+                }
+                KeyCode::Char(c) => {
+                    self.msg_pick.query.push(c);
+                    self.msg_pick.cursor = 0;
+                }
+                _ => {}
+            },
             Popup::Skills => match code {
                 KeyCode::Esc => self.popup = Popup::None,
                 KeyCode::Up => self.skill_pick.up(),
@@ -3057,6 +3248,9 @@ fn tool_mut<'a>(tools: &'a mut [UiTool], id: &str) -> Option<&'a mut UiTool> {
 fn fold_transcript_part(mut acc: Vec<UiMessage>, p: api::MsgPart) -> Vec<UiMessage> {
     if p.kind == "user" {
         acc.push(UiMessage {
+            id: String::new(),
+            run_id: None,
+            revertable: false,
             role: "user".into(),
             text: p.text.unwrap_or_default(),
             thinking: String::new(),
@@ -3069,6 +3263,9 @@ fn fold_transcript_part(mut acc: Vec<UiMessage>, p: api::MsgPart) -> Vec<UiMessa
     // Ensure a trailing assistant message to accumulate into.
     if !matches!(acc.last(), Some(m) if m.role == "assistant") {
         acc.push(UiMessage {
+            id: String::new(),
+            run_id: None,
+            revertable: false,
             role: "assistant".into(),
             text: String::new(),
             thinking: String::new(),
@@ -3127,6 +3324,9 @@ fn convert_message(m: api::Message) -> UiMessage {
         }
     }
     UiMessage {
+        id: m.id,
+        run_id: m.run_id,
+        revertable: m.revertable,
         role: m.role,
         text,
         thinking,
