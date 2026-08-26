@@ -26,11 +26,14 @@ clap = { version = "4", features = ["derive"] }
 dirs = "5"
 anyhow = "1"
 base64 = "0.22"
-ratatui = { version = "0.29", features = ["unstable-rendered-line-info"] }
+# scrolling-regions: `insert_before` then uses DECSTBM scroll regions and does not have to
+# redraw the viewport at all — which is what makes writing the transcript into the terminal's
+# own scrollback cheap enough to do per line (personal-agent-org/personal-agent#126).
+ratatui = { version = "0.30", features = ["unstable-rendered-line-info", "scrolling-regions"] }
 crossterm = { version = "0.28", features = ["event-stream"] }
-# Markdown → styled ratatui Text (assistant/user message bodies). 0.3.6 is the last
-# release built against ratatui 0.29 (0.3.7+ moved to ratatui 0.30).
-tui-markdown = "=0.3.6"
+# Markdown → styled ratatui Text (assistant/user message bodies). No longer pinned: the exact
+# pin existed to hold ratatui at 0.29, and it was holding the whole crate back with it.
+tui-markdown = "0.3"
 
 [dev-dependencies]
 # Snapshot tests for the render helpers: a rendering change shows up as a reviewable diff
