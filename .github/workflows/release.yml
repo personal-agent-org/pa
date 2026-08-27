@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   ci:
@@ -66,6 +67,7 @@ jobs:
         with:
           path: bins
           merge-multiple: true
+      - uses: sigstore/cosign-installer@v4.1.2
       - name: Compute CalVer
         id: ver
         run: |
@@ -89,10 +91,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           v="${{ steps.ver.outputs.version }}"
+          (cd bins && sha256sum pa-* > SHA256SUMS)
+          cosign sign-blob --yes --bundle bins/SHA256SUMS.sigstore.json bins/SHA256SUMS
           git rev-parse "$v" >/dev/null 2>&1 || { git tag "$v" && git push origin "$v"; }
           gh release view "$v" >/dev/null 2>&1 || gh release create "$v" --title "$v" --generate-notes
           gh release upload "$v" --clobber \
-            bins/pa-linux-x64 bins/pa-macos-arm64 bins/pa-windows-x64.exe
+            bins/pa-linux-x64 bins/pa-macos-arm64 bins/pa-windows-x64.exe \
+            bins/SHA256SUMS bins/SHA256SUMS.sigstore.json
           id=$(gh release view "$v" --json databaseId --jq .databaseId)
           echo "release_id=$id" >> "$GITHUB_OUTPUT"
 
@@ -140,6 +145,7 @@ jobs:
           projectPath: crates/pa
           args: --features gui
           tauriScript: cargo tauri
+      - uses: sigstore/cosign-installer@v4.1.2
       - name: Upload the bundles under stable names
         env:
           GH_TOKEN: ${{ github.token }}
@@ -150,9 +156,14 @@ jobs:
           # Upload each bundle independently so a missing one never blocks the other.
           if [ -n "$appimage" ]; then
             cp "$appimage" personal-agent.AppImage
-            gh release upload "$v" --clobber personal-agent.AppImage
+            cosign sign-blob --yes \
+              --bundle personal-agent.AppImage.sigstore.json personal-agent.AppImage
+            gh release upload "$v" --clobber \
+              personal-agent.AppImage personal-agent.AppImage.sigstore.json
           fi
           if [ -n "$deb" ]; then
             cp "$deb" personal-agent.deb
-            gh release upload "$v" --clobber personal-agent.deb
+            cosign sign-blob --yes \
+              --bundle personal-agent.deb.sigstore.json personal-agent.deb
+            gh release upload "$v" --clobber personal-agent.deb personal-agent.deb.sigstore.json
           fi
