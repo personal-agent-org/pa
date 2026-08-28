@@ -1,35 +1,33 @@
-# `pa` — Personal Agent chat clients
+# Personal Agent TUI
 
-One repository and one binary for the terminal and desktop chat experiences:
+`pa` is the terminal chat client for Personal Agent.
 
 ```bash
-pa                      # terminal chat UI (default)
-pa login --server …     # terminal login
+pa login --server https://pa.example.com
+pa
 pa logout
-pa gui                  # desktop window (GUI-enabled build)
 ```
 
-Desktop/TUI configuration is stored only per user under
-`~/.config/personal-agent/desktop/`. It is never loaded from `/etc`.
+Its credentials and settings are stored only for the current user under
+`~/.config/personal-agent/tui/`. They are never loaded from `/etc` and are not shared with the
+desktop app or Computer Service.
 
-Both surfaces are clients of the same HTTP/SSE/control-WebSocket API. They do not announce tools,
-sensors, filesystem access, or other host functions to the backend. Computer capabilities are
-provided exclusively by the separate
-[`computer-service`](https://github.com/personal-agent-org/computer-service).
+The TUI consumes the chat API and does not expose tools, sensors, filesystem access, or other
+host capabilities. Those are provided exclusively by the separate
+[`computer-service`](https://github.com/personal-agent-org/computer-service), which uses its own
+device-bound credential. The `/computer-service` command can install that service without giving
+it access to the TUI's chat token.
 
-Both clients offer installation of that separate background service as the `pacs` command: the
-desktop from Settings, the TUI through `/computer-service [device name]`. The service runs as its
-own process with its own device-bound credential. Desktop/TUI chat tokens are never shared with it.
+## Build
 
-## Builds
+```bash
+cargo build --release
+```
 
-- **Terminal:** `cargo build --release` or `just build`. No webview dependency.
-- **Desktop:** `cargo build --release --features gui` or `just build-gui`. Uses Tauri and the
-  platform webview.
+The `pa` binary is written to `target/release/pa`.
 
 ## Layout
 
-- `crates/pa`: binary and command dispatch
+- `crates/pa`: CLI entry point
 - `crates/pa-tui`: terminal chat client
-- `crates/pa-gui`: desktop chat shell and local Computer Service management
-- `crates/pa-oidc`: chat-client device-flow authentication
+- `crates/pa-oidc`: device-flow authentication

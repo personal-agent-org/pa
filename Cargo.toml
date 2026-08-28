@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/pa-oidc", "crates/pa-tui", "crates/pa-gui", "crates/pa"]
+members = ["crates/pa-oidc", "crates/pa-tui", "crates/pa"]
 
 [workspace.package]
 version = "2026.8.0"  # CalVer: YEAR.MONTH.MINOR, as in the backend

@@ -120,7 +120,7 @@ pub async fn discover(server: &str) -> Result<Discovery> {
 /// How the caller shows the pending device authorization to the user, and how it phrases a
 /// failure (the TUI localizes both, the agent prints plain text).
 /// `Sync` is part of the contract, not an accident: the grant polls across `.await` points, so
-/// a caller driving it from a multi-threaded runtime (the desktop window does) needs the prompt
+/// a caller driving it from a multi-threaded runtime needs the prompt
 /// to be shareable. Every implementation is a unit struct or holds a handle that already is.
 pub trait Prompt: Sync {
     /// Tell the user to open `url` in a browser and confirm `user_code`.

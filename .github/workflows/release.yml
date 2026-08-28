@@ -1,13 +1,10 @@
 name: Release
 
-# CalVer (YEAR.MONTH.MINOR), run manually. Builds the terminal `pa` chat client for every platform,
-# tags, and uploads the per-platform binaries. The `desktop-linux` job then builds the
-# gui-enabled bundle (.deb + AppImage) via the Tauri bundler and attaches it to the release.
 on:
   workflow_dispatch:
     inputs:
       minor:
-        description: "MINOR version within this month — leave empty to continue from the tags"
+        description: "MINOR version within this month; leave empty to continue from the tags"
         required: false
 
 permissions:
@@ -38,9 +35,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      # Terminal build: pa-gui is a workspace member but NOT compiled here (no --features gui),
-      # so no webview toolchain is needed on any runner.
-      - name: Build pa (headless) for ${{ matrix.target }}
+      - name: Build pa for ${{ matrix.target }}
         run: cargo build --release --target ${{ matrix.target }} -p pa
       - name: Stage the binary under its asset name
         shell: bash
@@ -56,9 +51,6 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
-    outputs:
-      release_id: ${{ steps.rel.outputs.release_id }}
-      version: ${{ steps.ver.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -69,101 +61,35 @@ jobs:
           merge-multiple: true
       - uses: sigstore/cosign-installer@v4.1.2
       - name: Compute CalVer
-        id: ver
+        id: version
         run: |
           prefix="$(date -u +%Y).$(date -u +%-m)"
           minor="${{ github.event.inputs.minor }}"
           if [ -z "$minor" ]; then
             git fetch --tags --force --quiet || true
             last=-1
-            for t in $(git tag -l "${prefix}.*"); do
-              n="${t##${prefix}.}"
-              case "$n" in ''|*[!0-9]*) continue ;; esac
-              [ "$n" -gt "$last" ] && last="$n"
+            for tag in $(git tag -l "${prefix}.*"); do
+              number="${tag##${prefix}.}"
+              case "$number" in ''|*[!0-9]*) continue ;; esac
+              [ "$number" -gt "$last" ] && last="$number"
             done
-            minor=$(( last + 1 ))
+            minor=$((last + 1))
           fi
           case "$minor" in ''|*[!0-9]*) echo "MINOR must be numeric" >&2; exit 1 ;; esac
           echo "version=${prefix}.${minor}" >> "$GITHUB_OUTPUT"
-      - name: Tag, release, upload
-        id: rel
+      - name: Tag and publish signed release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          v="${{ steps.ver.outputs.version }}"
+          version="${{ steps.version.outputs.version }}"
           (cd bins && sha256sum pa-* > SHA256SUMS)
           cosign sign-blob --yes --bundle bins/SHA256SUMS.sigstore.json bins/SHA256SUMS
-          git rev-parse "$v" >/dev/null 2>&1 || { git tag "$v" && git push origin "$v"; }
-          gh release view "$v" >/dev/null 2>&1 || gh release create "$v" --title "$v" --generate-notes
-          gh release upload "$v" --clobber \
+          git rev-parse "$version" >/dev/null 2>&1 || {
+            git tag "$version"
+            git push origin "$version"
+          }
+          gh release view "$version" >/dev/null 2>&1 || \
+            gh release create "$version" --title "$version" --generate-notes
+          gh release upload "$version" --clobber \
             bins/pa-linux-x64 bins/pa-macos-arm64 bins/pa-windows-x64.exe \
             bins/SHA256SUMS bins/SHA256SUMS.sigstore.json
-          id=$(gh release view "$v" --json databaseId --jq .databaseId)
-          echo "release_id=$id" >> "$GITHUB_OUTPUT"
-
-  desktop-linux:
-    # Desktop bundle: the SAME pa built with --features gui, wrapped as AppImage + .deb by the
-    # Tauri bundler. Runs after `release` so the tag exists; uploads the bundles to it.
-    needs: release
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Bundle deps
-        run: |
-          sudo apt-get update
-          # librsvg2-dev (not just -bin) is required: linuxdeploy-plugin-gtk reads
-          # `pkg-config --variable=libdir librsvg-2.0`, which only the -dev .pc file provides.
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
-            libayatana-appindicator3-dev librsvg2-bin librsvg2-dev
-      - name: Icons
-        run: |
-          cd crates/pa
-          for s in 32 128 256 512; do rsvg-convert -w "$s" -h "$s" app-icon.svg -o "icons/${s}x${s}.png"; done
-          cp icons/256x256.png icons/128x128@2x.png && cp icons/512x512.png icons/icon.png
-      - name: Take the version the release job resolved
-        id: ver
-        # NOT recomputed: this job's checkout carries no tags, so a second scan would start
-        # over at 0 and bundle the desktop artefacts onto the wrong release.
-        run: echo "version=${{ needs.release.outputs.version }}" >> "$GITHUB_OUTPUT"
-      - name: Install the Tauri CLI
-        uses: taiki-e/install-action@v2
-        with:
-          tool: tauri-cli
-      - uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # GitHub-hosted runners have no FUSE, so appimagetool/linuxdeploy can't mount their
-          # runtime; extract-and-run makes them unpack to a tmpdir instead. Without this the
-          # AppImage bundle step hangs/fails on ubuntu-latest.
-          APPIMAGE_EXTRACT_AND_RUN: "1"
-          NO_STRIP: "true"
-        with:
-          # tauri.conf.json lives in the pa binary crate; build with the gui feature. No
-          # tagName/releaseId => build only; we upload under stable names below. Bundle
-          # targets = ["deb", "appimage"] in tauri.conf.json.
-          projectPath: crates/pa
-          args: --features gui
-          tauriScript: cargo tauri
-      - uses: sigstore/cosign-installer@v4.1.2
-      - name: Upload the bundles under stable names
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          v="${{ steps.ver.outputs.version }}"
-          appimage=$(find target -type f -name "*.AppImage" | head -1)
-          deb=$(find target -type f -name "*.deb" | head -1)
-          # Upload each bundle independently so a missing one never blocks the other.
-          if [ -n "$appimage" ]; then
-            cp "$appimage" personal-agent.AppImage
-            cosign sign-blob --yes \
-              --bundle personal-agent.AppImage.sigstore.json personal-agent.AppImage
-            gh release upload "$v" --clobber \
-              personal-agent.AppImage personal-agent.AppImage.sigstore.json
-          fi
-          if [ -n "$deb" ]; then
-            cp "$deb" personal-agent.deb
-            cosign sign-blob --yes \
-              --bundle personal-agent.deb.sigstore.json personal-agent.deb
-            gh release upload "$v" --clobber personal-agent.deb personal-agent.deb.sigstore.json
-          fi
