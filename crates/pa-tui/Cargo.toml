@@ -25,7 +25,7 @@ toml = "0.8"
 clap = { version = "4", features = ["derive"] }
 dirs = "5"
 anyhow = "1"
-base64 = "0.22"
+base64 = "0.23"
 # scrolling-regions: `insert_before` then uses DECSTBM scroll regions and does not have to
 # redraw the viewport at all — which is what makes writing the transcript into the terminal's
 # own scrollback cheap enough to do per line (personal-agent-org/personal-agent#126).
