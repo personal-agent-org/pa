@@ -14,7 +14,7 @@ pa-oidc = { path = "../pa-oidc" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "io-util", "signal"] }
 # TLS trust comes from pa-oidc::tls (system store + SSL_CERT_FILE, webpki only as a fallback),
 # handed to reqwest as a preconfigured config -- so an internal CA works here too.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots-no-provider", "json", "stream"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-tls-webpki-roots-no-provider", "json", "stream"] }
 # Control WebSocket (cancel/status/approvals + server pushes). Shares the rustls/ring
 # stack with reqwest; ALPN is pinned to http/1.1 so the WS upgrade isn't offered h2.
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
